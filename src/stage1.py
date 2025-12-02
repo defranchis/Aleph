@@ -1,14 +1,16 @@
 
 
-
 processList = {
-"1994" : {"fraction" : 1, "output": "Znn"},           
+"QQB" : {"fraction" : 1, "output": "Zqq"},
 }
 
 
-outputDir = "/eos/user/h/hfatehi/D0fliped"
-inputDir = "/eos/experiment/fcc/ee/analyses/case-studies/aleph/LEP1_DATA/"
-nCPUS = -1
+
+outputDir = "/eos/user/m/mdefranc/aleph_vertex/Zqq/1994_stage1/"
+inputDir = "/eos/experiment/aleph/EDM4HEP/MC/1994/"
+nCPUS = 4
+
+
 includePaths = ["analyzer.h"]
 
 
@@ -27,8 +29,13 @@ class RDFanalysis:
         "Bz": "magFieldBz",
         }
 
-        df = df.Define("TrackStateFlipped",f"AlephSelection::flipD0_copy( {coll['TrackState']} )")
+        # MC EVENT FILTERING
+        df = df.Define("event_type", "AlephSelection::get_EventType({})".format(coll["GenParticles"]))
+        #df = df.Filter("event_type == 2") # d-quark: 1, u-quark:2, s-quark:3, c-quark:4, b-quark: 5
+        ########################################################################################################################
 
+
+        df = df.Define("TrackStateFlipped",f"AlephSelection::flipD0_copy( {coll['TrackState']} )")
         df = df.Filter("AlephSelection::sel_class_filter(16)(ClassBitset) ")
 
 
@@ -56,16 +63,95 @@ class RDFanalysis:
         df = df.Define("jet_p4", "JetConstituentsUtils::compute_tlv_jets(jets)" )
         df = df.Define("event_invariant_mass", "JetConstituentsUtils::InvariantMass(jet_p4[0], jet_p4[1])")
         ################################################### MC Filtering ############################################################
-        # MC EVENT FILTERING
-        #df = df.Define("event_type", "AlephSelection::get_EventType({})".format(coll["GenParticles"]))
-        #df = df.Filter("event_type == 2") # d-quark: 1, u-quark:2, s-quark:3, c-quark:4, b-quark: 5
-        ########################################################################################################################
-         ########## Picking Jet Flavors
+
         # ===== VERTEX
+        df = df.Filter("Vertices.size() == 1") # to remove eventually
         df = df.Define(
-            "pv",
-            "TLorentzVector(Vertices[0].position.x, Vertices[0].position.y, Vertices[0].position.z, 0.0)",
+            "pv", "TLorentzVector(Vertices[0].position.x, Vertices[0].position.y, Vertices[0].position.z, 0.0)",
         )
+        df = df.Define("pv_true", "AlephSelection::get_EventPrimaryVertexP4()({})".format(coll["GenParticles"]))
+
+        df = df.Define("pv_x", "Vertices[0].position.x")
+        df = df.Define("pv_y", "Vertices[0].position.y")
+        df = df.Define("pv_z", "Vertices[0].position.z")
+
+
+
+        df = df.Define("pv_true_x", "pv_true.X()")
+        df = df.Define("pv_true_y", "pv_true.Y()")
+        df = df.Define("pv_true_z", "pv_true.Z()")
+        df = df.Define("pv_res_x", "pv_x - pv_true_x")
+        df = df.Define("pv_res_y", "pv_y - pv_true_y")
+        df = df.Define("pv_res_z", "pv_z - pv_true_z")
+        
+
+
+        df = df.Define("ntracks", "ReconstructedParticle2Track::getTK_n({})".format(coll["TrackState"]))
+
+        # fit vertex with all tracks (first step)
+        df = df.Define("VertexObject_allTracks_noBS", "VertexFitterSimple::VertexFitter_Tk(1, {}, false)".format(coll["TrackState"]))
+        df = df.Define("Vertex_allTracks_noBS", "VertexingUtils::get_VertexData(VertexObject_allTracks_noBS)")
+
+
+        df = df.Define("VertexObject_allTracks", "VertexFitterSimple::VertexFitter_Tk(1, {}, true, 150e-3,50e-3,10.,0.,0.,0.)".format(coll["TrackState"]))
+        df = df.Define("Vertex_allTracks", "VertexingUtils::get_VertexData(VertexObject_allTracks)")
+        
+
+        df = df.Define("PV_allTracks_noBS_x", "Vertex_allTracks_noBS.position.x")
+        df = df.Define("PV_allTracks_noBS_y", "Vertex_allTracks_noBS.position.y")
+        df = df.Define("PV_allTracks_noBS_z", "Vertex_allTracks_noBS.position.z")
+
+        df = df.Define("PV_res_allTracks_noBS_true_x", "PV_allTracks_noBS_x - pv_true_x")
+        df = df.Define("PV_res_allTracks_noBS_true_y", "PV_allTracks_noBS_y - pv_true_y")
+        df = df.Define("PV_res_allTracks_noBS_true_z", "PV_allTracks_noBS_z - pv_true_z")
+
+        df = df.Define("PV_ratio_allTracks_noBS_true_x", "PV_allTracks_noBS_x / pv_true_x")
+        df = df.Define("PV_ratio_allTracks_noBS_true_y", "PV_allTracks_noBS_y / pv_true_y")
+        df = df.Define("PV_ratio_allTracks_noBS_true_z", "PV_allTracks_noBS_z / pv_true_z")
+
+        df = df.Define("PV_res_allTracks_noBS_V0_x", "PV_allTracks_noBS_x - pv_x")
+        df = df.Define("PV_res_allTracks_noBS_V0_y", "PV_allTracks_noBS_y - pv_y")
+        df = df.Define("PV_res_allTracks_noBS_V0_z", "PV_allTracks_noBS_z - pv_z")
+
+        df = df.Define("PV_ratio_allTracks_noBS_V0_x", "PV_allTracks_noBS_x / pv_x")
+        df = df.Define("PV_ratio_allTracks_noBS_V0_y", "PV_allTracks_noBS_y / pv_y")
+        df = df.Define("PV_ratio_allTracks_noBS_V0_z", "PV_allTracks_noBS_z / pv_z")
+
+        df = df.Define("PV_allTracks_noBS", "ROOT::VecOps::RVec<edm4hep::VertexData> v; v.push_back(Vertex_allTracks_noBS); return v;")
+
+
+        df = df.Define("PV_allTracks_x", "Vertex_allTracks.position.x")
+        df = df.Define("PV_allTracks_y", "Vertex_allTracks.position.y")
+        df = df.Define("PV_allTracks_z", "Vertex_allTracks.position.z")
+
+        df = df.Define("PV_res_allTracks_true_x", "PV_allTracks_x - pv_true_x")
+        df = df.Define("PV_res_allTracks_true_y", "PV_allTracks_y - pv_true_y")
+        df = df.Define("PV_res_allTracks_true_z", "PV_allTracks_z - pv_true_z")
+
+        df = df.Define("PV_ratio_allTracks_true_x", "PV_allTracks_x / pv_true_x")
+        df = df.Define("PV_ratio_allTracks_true_y", "PV_allTracks_y / pv_true_y")
+        df = df.Define("PV_ratio_allTracks_true_z", "PV_allTracks_z / pv_true_z")
+
+        df = df.Define("PV_res_allTracks_V0_x", "PV_allTracks_x - pv_x")
+        df = df.Define("PV_res_allTracks_V0_y", "PV_allTracks_y - pv_y")
+        df = df.Define("PV_res_allTracks_V0_z", "PV_allTracks_z - pv_z")
+
+        df = df.Define("PV_ratio_allTracks_V0_x", "PV_allTracks_x / pv_x")
+        df = df.Define("PV_ratio_allTracks_V0_y", "PV_allTracks_y / pv_y")
+        df = df.Define("PV_ratio_allTracks_V0_z", "PV_allTracks_z / pv_z")
+
+        df = df.Define("PV_allTracks", "ROOT::VecOps::RVec<edm4hep::VertexData> v; v.push_back(Vertex_allTracks); return v;")   # remove SV tracks from PV fit
+
+
+        df = df.Define("PV_res_allTracks_noBS_BS_x", "PV_allTracks_noBS_x - PV_allTracks_x")
+        df = df.Define("PV_res_allTracks_noBS_BS_y", "PV_allTracks_noBS_y - PV_allTracks_y")
+        df = df.Define("PV_res_allTracks_noBS_BS_z", "PV_allTracks_noBS_z - PV_allTracks_z")
+
+
+
+        return df
+
+
         ############################################# Particle Flow Level Variables #######################################################
         df = df.Define("pfcand_isMu",     "AlephSelection::get_isType(jetConstitutentsTypes,2)")
         df = df.Define("pfcand_isEl",     "AlephSelection::get_isType(jetConstitutentsTypes,1)")
@@ -148,23 +234,36 @@ class RDFanalysis:
     def output():
 
         return [
-            #"event_type",
-            "event_invariant_mass","event_njet", 
+            "event_type",
+            #"event_invariant_mass","event_njet", 
             # Jet Level Variables  
-            "jet_mass","jet_p","jet_e", "jet_phi", "jet_theta", "jet_pT","jet_eta",
-                            "jet_nnhad","jet_ngamma","jet_nchad","jet_nel", "jet_nmu", "jet_nconst",
+            #"jet_mass","jet_p","jet_e", "jet_phi", "jet_theta", "jet_pT","jet_eta",
+            #                "jet_nnhad","jet_ngamma","jet_nchad","jet_nel", "jet_nmu", "jet_nconst",
 
 
             #the dEdX values associated to the jet constituents:
-            "pfcand_dEdx_pads_type", "pfcand_dEdx_pads_value", "pfcand_dEdx_pads_error",
-                "pfcand_dEdx_wires_type", "pfcand_dEdx_wires_value", "pfcand_dEdx_wires_error",
-                "pfcand_isMu", "pfcand_isEl", "pfcand_isChargedHad", "pfcand_isGamma", "pfcand_isNeutralHad",
-                "pfcand_e", "pfcand_p", "pfcand_theta", "pfcand_phi", "pfcand_charge", "pfcand_type",
-                "pfcand_erel", "pfcand_erel_log", "pfcand_thetarel", "pfcand_phirel", 
-                "pfcand_dxy", "pfcand_dz", "pfcand_phi0", "pfcand_C", "pfcand_ct",
-                "pfcand_dptdpt", "pfcand_dxydxy", "pfcand_dzdz", "pfcand_dphidphi", "pfcand_detadeta",
-                "pfcand_dxydz", "pfcand_dphidxy", "pfcand_phidz", "pfcand_phictgtheta", "pfcand_dxyctgtheta",
-                "pfcand_dlambdadz", "pfcand_cctgtheta", "pfcand_phic", "pfcand_dxyc", "pfcand_cdz",
-                "pfcand_btagSip2dVal", "pfcand_btagSip2dSig", "pfcand_btagSip3dVal", "pfcand_btagSip3dSig", 
-                "pfcand_btagJetDistVal", "pfcand_btagJetDistSig",
-                ]
+            #"pfcand_dEdx_pads_type", "pfcand_dEdx_pads_value", "pfcand_dEdx_pads_error",
+            #    "pfcand_dEdx_wires_type", "pfcand_dEdx_wires_value", "pfcand_dEdx_wires_error",
+            #    "pfcand_isMu", "pfcand_isEl", "pfcand_isChargedHad", "pfcand_isGamma", "pfcand_isNeutralHad",
+            #    "pfcand_e", "pfcand_p", "pfcand_theta", "pfcand_phi", "pfcand_charge", "pfcand_type",
+            #    "pfcand_erel", "pfcand_erel_log", "pfcand_thetarel", "pfcand_phirel", 
+            #    "pfcand_dxy", "pfcand_dz", "pfcand_phi0", "pfcand_C", "pfcand_ct",
+            #    "pfcand_dptdpt", "pfcand_dxydxy", "pfcand_dzdz", "pfcand_dphidphi", "pfcand_detadeta",
+            #    "pfcand_dxydz", "pfcand_dphidxy", "pfcand_phidz", "pfcand_phictgtheta", "pfcand_dxyctgtheta",
+            #    "pfcand_dlambdadz", "pfcand_cctgtheta", "pfcand_phic", "pfcand_dxyc", "pfcand_cdz",
+            #    "pfcand_btagSip2dVal", "pfcand_btagSip2dSig", "pfcand_btagSip3dVal", "pfcand_btagSip3dSig", 
+            #    "pfcand_btagJetDistVal", "pfcand_btagJetDistSig",
+                "pv_x", "pv_y", "pv_z", "pv_true_x", "pv_true_y", "pv_true_z", "pv_res_x", "pv_res_y", "pv_res_z",
+                "ntracks",
+                "PV_allTracks_noBS_x", "PV_allTracks_noBS_y", "PV_allTracks_noBS_z", 
+                "PV_res_allTracks_noBS_true_x", "PV_res_allTracks_noBS_true_y", "PV_res_allTracks_noBS_true_z",
+                "PV_ratio_allTracks_noBS_true_x", "PV_ratio_allTracks_noBS_true_y", "PV_ratio_allTracks_noBS_true_z",
+                "PV_res_allTracks_noBS_V0_x", "PV_res_allTracks_noBS_V0_y", "PV_res_allTracks_noBS_V0_z",
+                "PV_ratio_allTracks_noBS_V0_x", "PV_ratio_allTracks_noBS_V0_y", "PV_ratio_allTracks_noBS_V0_z",
+                "PV_allTracks_x", "PV_allTracks_y", "PV_allTracks_z", 
+                "PV_res_allTracks_true_x", "PV_res_allTracks_true_y", "PV_res_allTracks_true_z",
+                "PV_ratio_allTracks_true_x", "PV_ratio_allTracks_true_y", "PV_ratio_allTracks_true_z",
+                "PV_res_allTracks_V0_x", "PV_res_allTracks_V0_y", "PV_res_allTracks_V0_z",
+                "PV_ratio_allTracks_V0_x", "PV_ratio_allTracks_V0_y", "PV_ratio_allTracks_V0_z",
+                "PV_res_allTracks_noBS_BS_x", "PV_res_allTracks_noBS_BS_y", "PV_res_allTracks_noBS_BS_z",
+        ]
