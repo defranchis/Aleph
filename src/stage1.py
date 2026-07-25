@@ -26,6 +26,12 @@ class Analysis():
                             help='Run tester file only for validation against Lukas ntuples.')
         parser.add_argument('--chunks', default=None, type=int,
                             help='Number of chunks per process/file')
+        parser.add_argument('--nthreads', default=None, type=int,
+                            help='Override the number of RDataFrame threads (for running several variants concurrently).')
+        parser.add_argument('--procfile', default=None, type=str,
+                            help='Process a single QQB input file (name without .root, e.g. ZM4212_40_AL) - for condor file-level splitting.')
+        parser.add_argument('--pvchi2', default=5.0, type=float,
+                            help='chi2max for PV track compatibility in get_PrimaryTracks (default 5.0 = validated baseline; lower = fewer tracks claimed primary = more secondaries).')
         # Parse additional arguments not known to the FCCAnalyses parsers
         # All command line arguments know to fccanalysis are provided in the
         # `cmdline_arg` dictionary.
@@ -137,7 +143,10 @@ class Analysis():
 
 
         #set run options:
-        
+
+        if self.ana_args.nthreads:
+            self.n_threads = self.ana_args.nthreads
+
         self.include_paths = ["analyzer.h"]
 
         # #submit to batch if requested:
@@ -238,7 +247,7 @@ class Analysis():
         res_y_loose = 100. # in um
         res_z_loose = 2. # in cm
 
-        chi2max = 5. # the maximum chi2 under which tracks are compatible with vertex fit 
+        chi2max = self.ana_args.pvchi2 # the maximum chi2 under which tracks are compatible with vertex fit (default 5.)
 
         # Guard: with fewer than 2 IP-preselected tracks there is no meaningful primary vertex,
         # so return NO primary tracks (the PV fit then falls back to the dummy beamspot vertex).
@@ -246,7 +255,7 @@ class Analysis():
         # track - that is what the reference wrapper (getPrimaryTracks in analyzer_pvtools.cxx,
         # `if(tracksToUse.size() < 2){ return primaryTracks; }`) guards against. Without this we
         # get nPrim=1 where the reference has nPrim=0 (~1400 events / 1.05M in the full sweep).
-        df = df.Define("RecoedPrimaryTracks_looseBS", "trackstates_selected_for_vertexfit_flipped.size() < 2 ? ROOT::VecOps::RVec<edm4hep::TrackState>{} : VertexFitterSimple::get_PrimaryTracks(trackstates_selected_for_vertexfit_flipped, true, {},{},{},0.,0.,0., {})".format(res_x_loose/10., res_y_loose/10., res_z_loose*1E03, chi2max)) # 10um as unit (x,y), 1cm as unit (z)
+        df = df.Define("RecoedPrimaryTracks_looseBS", "trackstates_selected_for_vertexfit_flipped.size() < 2 ? ROOT::VecOps::RVec<edm4hep::TrackState>{{}} : VertexFitterSimple::get_PrimaryTracks(trackstates_selected_for_vertexfit_flipped, true, {},{},{},0.,0.,0., {})".format(res_x_loose/10., res_y_loose/10., res_z_loose*1E03, chi2max)) # 10um as unit (x,y), 1cm as unit (z)
         df = df.Define("VertexObject_looseBS", "VertexFitterSimple::VertexFitter_Tk(1, RecoedPrimaryTracks_looseBS, true, {},{},{},0.,0.,0.)".format(res_x_loose/10., res_y_loose/10., res_z_loose*1E03)) # 10um as unit (x,y), 1cm as unit (z)
         df = df.Define("Vertex_refit_looseBS", "VertexingUtils::get_VertexData(VertexObject_looseBS)")
         df = df.Define("Vertex_refit_tlv", "TLorentzVector(Vertex_refit_looseBS.position.x, Vertex_refit_looseBS.position.y, Vertex_refit_looseBS.position.z, 0.)")
