@@ -26,6 +26,8 @@ class Analysis():
                             help='Run tester file only for validation against Lukas ntuples.')
         parser.add_argument('--chunks', default=None, type=int,
                             help='Number of chunks per process/file')
+        parser.add_argument('--truthV0', action='store_true',
+                            help='MC only: add mother-anchored V0 truth-matching branches (WP1 SV/V0 revisit).')
         parser.add_argument('--nthreads', default=None, type=int,
                             help='Override the number of RDataFrame threads (for running several variants concurrently).')
         parser.add_argument('--procfile', default=None, type=str,
@@ -145,11 +147,25 @@ class Analysis():
                         "QQB/ZM4212_40_AL" : {"fraction" : self.ana_args.fraction, "output":"ntuple_valid_tester_{}".format(self.ana_args.MCflavour)},
                     }
                 
-                #process full files: 
+                #process full files:
                 else:
                     self.process_list = {
-                            "QQB" : {"fraction" : self.ana_args.fraction, "output":output_name},        
+                            "QQB" : {"fraction" : self.ana_args.fraction, "output":output_name},
                         }
+
+                    # WP1 truth-matching runs: /eos/experiment is read-only from the
+                    # ironic nodes, write to the user EOS space instead (not for committing)
+                    if self.ana_args.truthV0:
+                        self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp1_stage1/{self.ana_args.tag}"
+
+                        # file-level splitting for condor: one job = one input file
+                        if self.ana_args.procfile:
+                            self.process_list = {
+                                f"QQB/{self.ana_args.procfile}": {
+                                    "fraction": self.ana_args.fraction,
+                                    "output": f"{output_name}_{self.ana_args.procfile}",
+                                },
+                            }
 
             
                 self.n_threads = 32 
@@ -161,6 +177,11 @@ class Analysis():
             self.n_threads = self.ana_args.nthreads
 
         self.include_paths = ["analyzer.h"]
+        if self.ana_args.truthV0:
+            if self.ana_args.doData:
+                print("----> ERROR: --truthV0 requires MC input.")
+                exit()
+            self.include_paths.append("analyzer_truth.h")
 
         # #submit to batch if requested:
         # self.run_batch = self.ana_args.batch # no longer supported
@@ -411,6 +432,50 @@ class Analysis():
         df = df.Define("v0_dy",  "FCCAnalyses::AlephSelection::get_dy_SV_jets(v0_jets, PrimaryVertexP3)")
         df = df.Define("v0_dz",  "FCCAnalyses::AlephSelection::get_dz_SV_jets(v0_jets, PrimaryVertexP3)")
 
+        ############################################# V0 truth matching (WP1, --truthV0 only) ###################################
+        if self.ana_args.truthV0:
+            # many-to-many track<->MC maps from the (non-empty) trackMCLink ObjectIDs
+            df = df.Define("mcToTracks",  f"FCCAnalyses::AlephTruth::buildMCToTracks({coll['GenParticles']}.size(), _trackMCLink_from, _trackMCLink_to)")
+            df = df.Define("trackToMCs",  "FCCAnalyses::AlephTruth::buildTrackToMCs(Tracks.size(), _trackMCLink_from, _trackMCLink_to)")
+            # mother-anchored true V0s (geometric daughter recovery, cm units)
+            df = df.Define("trueV0s",     f"FCCAnalyses::AlephTruth::findTrueV0s({coll['GenParticles']}, mcToTracks)")
+            df = df.Define("truev0_pdg",      "trueV0s.pdg")
+            df = df.Define("truev0_p",        "trueV0s.p")
+            df = df.Define("truev0_costheta", "trueV0s.costheta")
+            df = df.Define("truev0_px",       "trueV0s.px")
+            df = df.Define("truev0_py",       "trueV0s.py")
+            df = df.Define("truev0_pz",       "trueV0s.pz")
+            df = df.Define("truev0_fd",       "trueV0s.fd")
+            df = df.Define("truev0_dpv",      "trueV0s.dpv")
+            df = df.Define("truev0_nmatched", "trueV0s.nmatched")
+            # candidate track indices back to the original Tracks collection
+            df = df.Define("selBaselineOrigIdx", "FCCAnalyses::AlephTruth::selectedBaselineOriginalIndices(Tracks, _Tracks_trackStates, trackstates_selected_baseline)")
+            df = df.Define("sec2origIdx",        "FCCAnalyses::AlephTruth::secondaryToOriginalTrack(SecondaryTracks_looseBS, trackstates_selected_baseline_flipped, selBaselineOrigIdx)")
+            # daughters surviving into the secondary-track set (0-2): separates PV-claim losses from finder losses
+            df = df.Define("truev0_nsec",        "FCCAnalyses::AlephTruth::daughtersInSecondaries(trueV0s, mcToTracks, sec2origIdx)")
+            # recover which track pair each candidate came from (compiled get_V0s leaves reco_ind empty);
+            # classifyV0s cross-checks this replica against V0s_event pdg/invM and throws on mismatch
+            df = df.Define("v0pairs",       "FCCAnalyses::AlephTruth::rerunV0Pairing(SecondaryTracks_looseBS, VertexObject_looseBS)")
+            # truth classification of the reco V0 candidates (event order = V0s_event order)
+            df = df.Define("v0truth",       f"FCCAnalyses::AlephTruth::classifyV0s(V0s_event, v0pairs, SecondaryTracks_looseBS, sec2origIdx, trackToMCs, {coll['GenParticles']}, trueV0s)")
+            df = df.Define("v0c_class",       "v0truth.cls")
+            df = df.Define("v0c_trueidx",     "v0truth.true_idx")
+            df = df.Define("v0c_pairmult",    "v0truth.pair_mult")
+            df = df.Define("v0c_trackshared", "v0truth.track_shared")
+            df = df.Define("v0c_alpha",       "v0truth.alpha")
+            df = df.Define("v0c_qt",          "v0truth.qt")
+            df = df.Define("v0c_trk1",        "v0truth.trk1")
+            df = df.Define("v0c_trk2",        "v0truth.trk2")
+            # event-order candidate kinematics (independent of jet assignment)
+            df = df.Define("v0c_pdg",         "V0s_event.pdgAbs")
+            df = df.Define("v0c_invM",        "V0s_event.invM")
+            df = df.Define("v0c_dxyz",        "FCCAnalyses::AlephTruth::candDxyz(V0s_event, VertexObject_looseBS)")
+            df = df.Define("v0c_p",           "FCCAnalyses::AlephTruth::candP(V0s_event)")
+            df = df.Define("v0c_cosPointing", "FCCAnalyses::AlephTruth::candCosPointing(V0s_event, VertexObject_looseBS)")
+            # per-true-V0 found flags
+            df = df.Define("truev0_found_any",     "FCCAnalyses::AlephTruth::trueV0FoundAny(trueV0s, v0truth)")
+            df = df.Define("truev0_found_correct", "FCCAnalyses::AlephTruth::trueV0FoundCorrect(trueV0s, v0truth, V0s_event)")
+
         ############################################# Particle Flow Level Variables #######################################################
         df = df.Define("pfcand_isMu",     "AlephSelection::get_isType(jetConstitutentsTypes,2)")
         df = df.Define("pfcand_isEl",     "AlephSelection::get_isType(jetConstitutentsTypes,1)")
@@ -586,7 +651,18 @@ class Analysis():
 
     def output(self):
 
-        return [
+        truth_branches = []
+        if self.ana_args.truthV0:
+            truth_branches = [
+                "truev0_pdg", "truev0_p", "truev0_costheta",
+                "truev0_px", "truev0_py", "truev0_pz",
+                "truev0_fd", "truev0_dpv",
+                "truev0_nmatched", "truev0_nsec", "truev0_found_any", "truev0_found_correct",
+                "v0c_class", "v0c_trueidx", "v0c_pairmult", "v0c_trackshared",
+                "v0c_alpha", "v0c_qt", "v0c_trk1", "v0c_trk2",
+                "v0c_pdg", "v0c_invM", "v0c_dxyz", "v0c_p", "v0c_cosPointing",
+            ]
+        return truth_branches + [
             #DEBUG
             "pfcand_dEdx_len", "pfcand_E_len", "pfcand_pval_ele_len",
 
