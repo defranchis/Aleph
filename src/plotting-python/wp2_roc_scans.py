@@ -117,7 +117,10 @@ def main():
     ok = d["v0c_alpha"] > -10
     fig, ax = plt.subplots(figsize=(5.5, 4.2))
     h = ok & (d["v0c_pdg"] == 310)
-    ell = np.sqrt((d["v0c_alpha"] / 0.83) ** 2 + (d["v0c_qt"] / 0.206) ** 2)
+    PSTAR_K, ESTAR_K, MKS = 0.20582, 0.248806, 0.497611
+    beta = d["v0c_p"] / np.sqrt(d["v0c_p"] ** 2 + MKS ** 2)
+    amax = PSTAR_K / (beta * ESTAR_K)
+    ell = np.sqrt((d["v0c_alpha"] / amax) ** 2 + (d["v0c_qt"] / PSTAR_K) ** 2)
     sig, bkg = ell[h & (d["v0c_class"] == 1)], ell[h & (d["v0c_class"] != 1)]
     # band |ell-1| < thr
     band_sig, band_bkg = np.abs(sig - 1.), np.abs(bkg - 1.)
@@ -139,7 +142,7 @@ def main():
         S[f"L6_cosPointing_{name}"] = roc(ax, sig, bkg, thr_cp[::-1], False, name, col)
     ax.set_xlabel("signal efficiency"); ax.set_ylabel("background rejection")
     ax.grid(alpha=0.25, lw=0.5); ax.legend(frameon=False, fontsize=8)
-    fig.suptitle(f"L6: cosPointing scan (current cut 0.999){lab}")
+    fig.suptitle(f"L6: cosPointing scan (adopted tiers 0.999/0.9995/0.9999 (Ks), 0.99995 (Λ)){lab}")
     fig.tight_layout(); fig.savefig(f"{args.outdir}/roc_L6_cospointing.png", dpi=140); plt.close(fig)
 
     # ---- L7: vertex chi2 (v0n only - well-conditioned single fit) ----

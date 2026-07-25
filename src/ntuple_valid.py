@@ -25,7 +25,7 @@ def get_value(obj):
 # floats are compared with a relative tolerance: the two codes do the same arithmetic in a
 # different order, so last-bit differences are expected and are not physics.
 
-def values_equal(val1, val2, rtol=1e-4):
+def values_equal(val1, val2, rtol=RTOL):
     if isinstance(val1, list) != isinstance(val2, list):
         return False
     if isinstance(val1, list):
@@ -155,9 +155,9 @@ def main():
     parser = argparse.ArgumentParser(description="Event-by-event ntuple comparison vs Luka's reference")
     parser.add_argument("--rtol", type=float, default=RTOL, help="relative tolerance for float comparisons")
     parser.add_argument("--file1", default="/eos/user/l/llambrec/aleph-data/ntuples-withks/eventlevel/mc/output_qqb_1.root",
-                        help="Luka's reference file (ntuples-withksloose = V0 plots, no pointing angle cut)")
+                        help="reference ntuple (default: Luka withks eventlevel mc chunk)")
     parser.add_argument("--file2", default="/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedMC/1994/zqq/stage1/test_fixSVfinderV0rejection_21july/Zbb.root",
-                        help="our stage1 file")
+                        help="our stage1 file (default is an example/most-recent local output, not a canonical reference)")
     parser.add_argument("--max-print", type=int, default=10, help="max differing events to print in full")
     parser.add_argument("--all-flavours", action="store_true",
                         help="do not filter Luka's file to genEventType==5 (use when ours is produced without the flavour/class filters)")

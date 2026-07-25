@@ -75,6 +75,7 @@ constexpr double LOOSE_COS_POINT = 0.999;
 constexpr double LOOSE_QT_MIN_LAM = 0.02;
 constexpr double LOOSE_NSIG_KS = 6.;
 constexpr double LOOSE_LAM_BAND_LO = 0.20, LOOSE_LAM_BAND_HI = 0.40;
+constexpr double LAM_P_LO = 8., LAM_P_HI = 20.;
 
 // Shared per-hypothesis acceptance helpers, used by findV0s (both tiers) and
 // candTight (offline re-evaluation of the booked hypothesis).
@@ -101,7 +102,7 @@ inline double lamBandEll(double alpha, double qt, double pmag) {
                    std::pow(qt / PSTAR_L, 2));
 }
 inline double lamBandThr(double pmag, double lo, double hi) {
-  return (pmag < 8.) ? lo : (pmag < 20.) ? lo + (hi - lo) * (pmag - 8.) / 12. : hi;
+  return (pmag < LAM_P_LO) ? lo : (pmag < LAM_P_HI) ? lo + (hi - lo) * (pmag - LAM_P_LO) / (LAM_P_HI - LAM_P_LO) : hi;
 }
 
 // momenta of the two tracks at the fitted vertex (already rescaled to the true

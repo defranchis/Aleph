@@ -1,6 +1,8 @@
 
 from argparse import ArgumentParser
 
+BZ = 1.5  # solenoid field [T] — single source for the stage1 Define strings
+
 class Analysis():
 
     def __init__(self, cmdline_args):
@@ -33,9 +35,9 @@ class Analysis():
         parser.add_argument('--procfile', default=None, type=str,
                             help='Process a single QQB input file (name without .root, e.g. ZM4212_40_AL) - for condor file-level splitting.')
         parser.add_argument('--newV0', action='store_true',
-                            help='Run the WP2 standalone V0 module in parallel (v0n_* branches); requires --truthV0.')
+                            help='Run the WP2 standalone V0 module (v0n_* branches; truth classification added when combined with --truthV0 on MC).')
         parser.add_argument('--v0nKsPointing', default=None, type=float,
-                            help='Override the WP2 module Ks cosPointing cut (e.g. 0.999 loose, for offline threshold scans; default = adopted 0.9999).')
+                            help='DEPRECATED/superseded by the two-tier module; using it is an error.')
         parser.add_argument('--pvchi2', default=5.0, type=float,
                             help='chi2max for PV track compatibility in get_PrimaryTracks (default 5.0 = validated baseline; lower = fewer tracks claimed primary = more secondaries).')
         # Parse additional arguments not known to the FCCAnalyses parsers
@@ -102,7 +104,7 @@ class Analysis():
                     "1994" : {"fraction" : self.ana_args.fraction},
                 }
 
-                # WP2 data runs from the ironic nodes: write to user EOS (not for committing)
+                # WP2 data runs from the ironic nodes: write to user EOS (user-EOS output routing for ironic-node condor runs)
                 if self.ana_args.newV0:
                     self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp2_data/{self.ana_args.tag}"
 
@@ -147,7 +149,7 @@ class Analysis():
                 #local tester for validation
                 if self.ana_args.valid:
 
-                    # local test tweaks (not for committing): write to node-local disk
+                    # local test tweaks (node-local /tmp output): write to node-local disk
                     # (/eos/experiment is read-only from the ironic nodes) and use
                     # ZM4212_40_AL, the file containing the key differing events vs
                     # Luka's output_qqb_1 (2584, 2993, 4282, 5450, 2463, ...)
@@ -155,7 +157,7 @@ class Analysis():
 
                     # re-clustered input copy (30 TTree clusters instead of 3): lifts the
                     # RDataFrame thread cap from 3 to ~30 cores; verified byte-identical
-                    # output. Regenerate with the recluster.py helper if /tmp was wiped.
+                    # output.
                     import os
                     if os.path.isdir("/tmp/reclus_input/QQB"):
                         self.input_dir = "/tmp/reclus_input/"
@@ -171,7 +173,7 @@ class Analysis():
                         }
 
                     # WP1 truth-matching runs: /eos/experiment is read-only from the
-                    # ironic nodes, write to the user EOS space instead (not for committing)
+                    # ironic nodes, write to the user EOS space instead (user-EOS output routing for ironic-node condor runs)
                     if self.ana_args.truthV0:
                         self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp1_stage1/{self.ana_args.tag}"
 
@@ -190,7 +192,7 @@ class Analysis():
 
         #set run options:
 
-        if self.ana_args.nthreads:
+        if self.ana_args.nthreads is not None:
             self.n_threads = self.ana_args.nthreads
 
         self.include_paths = ["analyzer.h"]
@@ -502,12 +504,11 @@ class Analysis():
         ############################################# WP2 standalone V0 module (--newV0) ########################################
         if self.ana_args.newV0:
             if self.ana_args.v0nKsPointing is not None:
-                # override ONLY the p>=4 GeV Ks pointing tier; every other cut keeps the findV0s C++ default
-                df = df.Define("V0sNew_event",
-                    "FCCAnalyses::AlephV0New::findV0s(SecondaryTracks_looseBS, VertexObject_looseBS, 1.5, "
-                    f"{self.ana_args.v0nKsPointing})")
-            else:
-                df = df.Define("V0sNew_event", "FCCAnalyses::AlephV0New::findV0s(SecondaryTracks_looseBS, VertexObject_looseBS, 1.5)")
+                print("----> ERROR: --v0nKsPointing is superseded by the two-tier module: the loose "
+                      "tier now covers the offline scan range, and v0n_tight/candTight assume the "
+                      "adopted tight package. Using it is an error.")
+                exit()
+            df = df.Define("V0sNew_event", f"FCCAnalyses::AlephV0New::findV0s(SecondaryTracks_looseBS, VertexObject_looseBS, {BZ})")
             df = df.Define("n_v0n_event",  "int(V0sNew_event.vtx.size())")
             df = df.Define("v0n_pdg",      "V0sNew_event.pdgAbs")
             df = df.Define("v0n_invM",     "V0sNew_event.invM")
