@@ -2,7 +2,12 @@
 
 import sys
 import math
+import argparse
 import ROOT
+
+# relative tolerance for float comparisons, settable from the command line (--rtol).
+# default 1e-4 (upstream choice): differences below that are fit-level FP jitter, not physics.
+RTOL = 1e-4
 
 # helper function to read branches
 # note: several branches are nested RVec<RVec<...>> (per jet, per vertex), so a single
@@ -119,7 +124,7 @@ def compare_events(filepath1, filepath2,
             val1 = get_value(getattr(tree1, branch_1))
             val2 = get_value(getattr(tree2, branch_2))
 
-            if values_equal(val1, val2):
+            if values_equal(val1, val2, rtol=RTOL):
                 continue
 
             n_diff_per_branch[branch_name] += 1
@@ -145,22 +150,35 @@ def compare_events(filepath1, filepath2,
 
 def main():
 
+    global RTOL
+
+    parser = argparse.ArgumentParser(description="Event-by-event ntuple comparison vs Luka's reference")
+    parser.add_argument("--rtol", type=float, default=RTOL, help="relative tolerance for float comparisons")
+    parser.add_argument("--file1", default="/eos/user/l/llambrec/aleph-data/ntuples-withks/eventlevel/mc/output_qqb_1.root",
+                        help="Luka's reference file (ntuples-withksloose = V0 plots, no pointing angle cut)")
+    parser.add_argument("--file2", default="/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedMC/1994/zqq/stage1/test_fixSVfinderV0rejection_21july/Zbb.root",
+                        help="our stage1 file")
+    parser.add_argument("--max-print", type=int, default=10, help="max differing events to print in full")
+    parser.add_argument("--all-flavours", action="store_true",
+                        help="do not filter Luka's file to genEventType==5 (use when ours is produced without the flavour/class filters)")
+    args = parser.parse_args()
+    RTOL = args.rtol
+    print(f"Using rtol = {RTOL}")
+
     tree_name = "events"
 
     # First we get the sets of run and event number from each file and find the overlap (=common events)
-    file1 = "/eos/user/l/llambrec/aleph-data/ntuples-withks/eventlevel/mc/output_qqb_1.root" # for training? 
-    # file1 = "/eos/user/l/llambrec/aleph-data/ntuples-withksloose/eventlevel/mc/output_qqb_1.root" #for V0 plots, no pointing angle cut!
+    file1 = args.file1
     run_branch_1 = "runNumber"
     event_branch_1 = "eventNumber"
 
     print("Checking events in file {}".format(file1))
     # Note: Luka's file is not filtered by flavour, ours is, so apply the flavour filter here
-    events1 = load_events(file1, tree_name, run_branch_1, event_branch_1, do_flavour_filter = True, flavour_val = 5.)
+    events1 = load_events(file1, tree_name, run_branch_1, event_branch_1,
+                          do_flavour_filter = not args.all_flavours, flavour_val = 5.)
     print(f"File1: {len(events1)} events")
 
-    # file2 = "/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedMC/1994/zqq/stage1/v09_ntuple_valid/ntuple_valid_tester_5.root" 
-    # file2 = "/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedMC/1994/zqq/stage1/v15_SV_test/Zbb.root" 
-    file2 = "/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedMC/1994/zqq/stage1/test_fixSVfinderV0rejection_21july/Zbb.root" 
+    file2 = args.file2
     run_branch_2 = "run_number"
     event_branch_2 = "event_number"
 
@@ -188,7 +206,8 @@ def main():
         "run":("runNumber", "run_number"),
         "event":("eventNumber", "event_number"),
         #input to the primary vertex fit:
-        # "n_selected_tracks":("Event_nSelectedTracks", "n_tracks_sel"),
+        "n_tracks_all":("Event_nTracks", "n_tracks_all"),
+        "n_selected_tracks":("Event_nSelectedTracks", "n_tracks_sel"),
         # # "n_selected_tracks_vertex":("", "n_trackstates_sel"), #luka doesnt store this?
         # # output of primary vertex fit
         "n_primary_tracks":("Event_nPrimaryTracks", "n_primary_tracks"),
@@ -213,7 +232,7 @@ def main():
 
     }
 
-    compare_events(file1, file2, common, branch_translation)
+    compare_events(file1, file2, common, branch_translation, max_print=args.max_print)
     print(f"Reminder: Common events: {len(common)}")
 
 
