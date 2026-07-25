@@ -128,8 +128,21 @@ class Analysis():
                 #local tester for validation
                 if self.ana_args.valid:
 
-                    self.process_list = { 
-                        "QQB/ZM4212_39_AL" : {"fraction" : self.ana_args.fraction, "output":"ntuple_valid_tester_{}".format(self.ana_args.MCflavour)},           
+                    # local test tweaks (not for committing): write to node-local disk
+                    # (/eos/experiment is read-only from the ironic nodes) and use
+                    # ZM4212_40_AL, the file containing the key differing events vs
+                    # Luka's output_qqb_1 (2584, 2993, 4282, 5450, 2463, ...)
+                    self.output_dir = f"/tmp/aleph_valid_runs/{self.ana_args.tag}"
+
+                    # re-clustered input copy (30 TTree clusters instead of 3): lifts the
+                    # RDataFrame thread cap from 3 to ~30 cores; verified byte-identical
+                    # output. Regenerate with the recluster.py helper if /tmp was wiped.
+                    import os
+                    if os.path.isdir("/tmp/reclus_input/QQB"):
+                        self.input_dir = "/tmp/reclus_input/"
+
+                    self.process_list = {
+                        "QQB/ZM4212_40_AL" : {"fraction" : self.ana_args.fraction, "output":"ntuple_valid_tester_{}".format(self.ana_args.MCflavour)},
                     }
                 
                 #process full files: 
