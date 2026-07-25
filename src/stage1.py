@@ -32,6 +32,10 @@ class Analysis():
                             help='Override the number of RDataFrame threads (for running several variants concurrently).')
         parser.add_argument('--procfile', default=None, type=str,
                             help='Process a single QQB input file (name without .root, e.g. ZM4212_40_AL) - for condor file-level splitting.')
+        parser.add_argument('--newV0', action='store_true',
+                            help='Run the WP2 standalone V0 module in parallel (v0n_* branches); requires --truthV0.')
+        parser.add_argument('--v0nKsPointing', default=None, type=float,
+                            help='Override the WP2 module Ks cosPointing cut (e.g. 0.999 loose, for offline threshold scans; default = adopted 0.9999).')
         parser.add_argument('--pvchi2', default=5.0, type=float,
                             help='chi2max for PV track compatibility in get_PrimaryTracks (default 5.0 = validated baseline; lower = fewer tracks claimed primary = more secondaries).')
         # Parse additional arguments not known to the FCCAnalyses parsers
@@ -95,10 +99,23 @@ class Analysis():
 
             else:
                 self.process_list = {
-                    "1994" : {"fraction" : self.ana_args.fraction},           
+                    "1994" : {"fraction" : self.ana_args.fraction},
                 }
 
-                self.n_threads = 32 
+                # WP2 data runs from the ironic nodes: write to user EOS (not for committing)
+                if self.ana_args.newV0:
+                    self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp2_data/{self.ana_args.tag}"
+
+                    # file-level splitting for condor: one job = one data file
+                    if self.ana_args.procfile:
+                        self.process_list = {
+                            f"1994/{self.ana_args.procfile}": {
+                                "fraction": self.ana_args.fraction,
+                                "output": f"data_{self.ana_args.procfile}",
+                            },
+                        }
+
+                self.n_threads = 32
 
         else:
             self.input_dir = f"/eos/experiment/aleph/EDM4HEP/MC/{self.ana_args.year}/"
@@ -182,6 +199,12 @@ class Analysis():
                 print("----> ERROR: --truthV0 requires MC input.")
                 exit()
             self.include_paths.append("analyzer_truth.h")
+        if self.ana_args.newV0:
+            # runs standalone on data (kinematic branches only); with --truthV0 on MC
+            # the truth-classification branches are added as well
+            if "analyzer_truth.h" not in self.include_paths:
+                self.include_paths.append("analyzer_truth.h")  # truth-free helpers used by v0n branches
+            self.include_paths.append("analyzer_v0new.h")
 
         # #submit to batch if requested:
         # self.run_batch = self.ana_args.batch # no longer supported
@@ -476,6 +499,67 @@ class Analysis():
             df = df.Define("truev0_found_any",     "FCCAnalyses::AlephTruth::trueV0FoundAny(trueV0s, v0truth)")
             df = df.Define("truev0_found_correct", "FCCAnalyses::AlephTruth::trueV0FoundCorrect(trueV0s, v0truth, V0s_event)")
 
+        ############################################# WP2 standalone V0 module (--newV0) ########################################
+        if self.ana_args.newV0:
+            if self.ana_args.v0nKsPointing is not None:
+                # override ONLY the p>=4 GeV Ks pointing tier; every other cut keeps the findV0s C++ default
+                df = df.Define("V0sNew_event",
+                    "FCCAnalyses::AlephV0New::findV0s(SecondaryTracks_looseBS, VertexObject_looseBS, 1.5, "
+                    f"{self.ana_args.v0nKsPointing})")
+            else:
+                df = df.Define("V0sNew_event", "FCCAnalyses::AlephV0New::findV0s(SecondaryTracks_looseBS, VertexObject_looseBS, 1.5)")
+            df = df.Define("n_v0n_event",  "int(V0sNew_event.vtx.size())")
+            df = df.Define("v0n_pdg",      "V0sNew_event.pdgAbs")
+            df = df.Define("v0n_invM",     "V0sNew_event.invM")
+            # truth-free kinematic branches (available on data)
+            df = df.Define("v0n_alpha",       "FCCAnalyses::AlephV0New::candAlpha(V0sNew_event, SecondaryTracks_looseBS)")
+            df = df.Define("v0n_qt",          "FCCAnalyses::AlephV0New::candQt(V0sNew_event)")
+            df = df.Define("v0n_chi2",        "FCCAnalyses::AlephTruth::candChi2(V0sNew_event)")
+            df = df.Define("v0n_dxyz",        "FCCAnalyses::AlephTruth::candDxyz(V0sNew_event, VertexObject_looseBS)")
+            df = df.Define("v0n_p",           "FCCAnalyses::AlephTruth::candP(V0sNew_event)")
+            df = df.Define("v0n_cosPointing", "FCCAnalyses::AlephTruth::candCosPointing(V0sNew_event, VertexObject_looseBS)")
+            df = df.Define("v0n_pointSig",    "FCCAnalyses::AlephV0New::candPointSig(V0sNew_event, VertexObject_looseBS)")
+            # two-tier module (2026-07-25): 1 = adopted tight package, 0 = loose training tier.
+            # Selecting v0n_tight==1 reproduces the historical tight-only output exactly.
+            df = df.Define("v0n_tight",       "FCCAnalyses::AlephV0New::candTight(V0sNew_event, VertexObject_looseBS, SecondaryTracks_looseBS)")
+            # per-jet new-module V0s: exact mirror of the old-finder v0_* block, run on V0sNew_event.
+            # Gives the NEW reco identical jet-level, jet-relative kinematics (prel = pT wrt jet axis,
+            # thetarel/phirel = direction wrt jet) so old (v0_*) vs new (v0njet_*) is apples-to-apples.
+            df = df.Define("v0njet_per_jet", "FCCAnalyses::AlephSelection::assign_V0s_to_jets(V0sNew_event, jets)")
+            df = df.Define("v0njet_jets",  "v0njet_per_jet.vtx")
+            df = df.Define("v0njet_pdg",   "v0njet_per_jet.pdgAbs")
+            df = df.Define("v0njet_invM",  "v0njet_per_jet.invM")
+            df = df.Define("n_v0njet_jets",    "FCCAnalyses::VertexingUtils::get_n_SV_jets(v0njet_jets)")
+            df = df.Define("n_v0njet_ks",      "FCCAnalyses::AlephSelection::count_V0type_jets(v0njet_pdg, 310)")
+            df = df.Define("n_v0njet_lambda",  "FCCAnalyses::AlephSelection::count_V0type_jets(v0njet_pdg, 3122)")
+            df = df.Define("v0njet_chi2",          "FCCAnalyses::VertexingUtils::get_chi2_SV(v0njet_jets)")
+            df = df.Define("v0njet_chi2_norm",     "FCCAnalyses::VertexingUtils::get_norm_chi2_SV(v0njet_jets)")
+            df = df.Define("v0njet_ndof",          "FCCAnalyses::VertexingUtils::get_nDOF_SV(v0njet_jets)")
+            df = df.Define("v0njet_ntracks",       "FCCAnalyses::VertexingUtils::get_VertexNtrk(v0njet_jets)")
+            df = df.Define("v0njet_p",             "FCCAnalyses::VertexingUtils::get_pMag_SV(v0njet_jets)")
+            df = df.Define("v0njet_prel",          "FCCAnalyses::AlephSelection::get_prel_SV_jets(v0njet_jets, jets)")
+            df = df.Define("v0njet_thetarel",      "FCCAnalyses::VertexingUtils::get_relTheta_SV(v0njet_jets, jets)")
+            df = df.Define("v0njet_phirel",        "FCCAnalyses::VertexingUtils::get_relPhi_SV(v0njet_jets, jets)")
+            df = df.Define("v0njet_dxy",           "FCCAnalyses::VertexingUtils::get_dxy_SV(v0njet_jets, VertexObject_looseBS)")
+            df = df.Define("v0njet_dxyz",          "FCCAnalyses::VertexingUtils::get_d3d_SV(v0njet_jets, VertexObject_looseBS)")
+            df = df.Define("v0njet_cosPointing",   "FCCAnalyses::AlephSelection::get_pointingangle_SV(v0njet_jets, VertexObject_looseBS)")
+            df = df.Define("v0njet_correctedMass", "FCCAnalyses::AlephSelection::get_correctedInvMass_SV(v0njet_jets, VertexObject_looseBS)")
+            df = df.Define("v0njet_dx",  "FCCAnalyses::AlephSelection::get_dx_SV_jets(v0njet_jets, PrimaryVertexP3)")
+            df = df.Define("v0njet_dy",  "FCCAnalyses::AlephSelection::get_dy_SV_jets(v0njet_jets, PrimaryVertexP3)")
+            df = df.Define("v0njet_dz",  "FCCAnalyses::AlephSelection::get_dz_SV_jets(v0njet_jets, PrimaryVertexP3)")
+            # truth classification (MC with --truthV0 only; reco_ind is filled by the new module)
+            if self.ana_args.truthV0:
+                df = df.Define("v0npairs",     "FCCAnalyses::AlephTruth::pairsFromRecoInd(V0sNew_event)")
+                df = df.Define("v0ntruth",     f"FCCAnalyses::AlephTruth::classifyV0s(V0sNew_event, v0npairs, SecondaryTracks_looseBS, sec2origIdx, trackToMCs, {coll['GenParticles']}, trueV0s)")
+                df = df.Define("v0n_class",       "v0ntruth.cls")
+                df = df.Define("v0n_trueidx",     "v0ntruth.true_idx")
+                df = df.Define("v0n_pairmult",    "v0ntruth.pair_mult")
+                df = df.Define("v0n_trackshared", "v0ntruth.track_shared")
+                df = df.Define("v0n_trk1",        "v0ntruth.trk1")
+                df = df.Define("v0n_trk2",        "v0ntruth.trk2")
+                df = df.Define("truev0_foundnew_any",     "FCCAnalyses::AlephTruth::trueV0FoundAny(trueV0s, v0ntruth)")
+                df = df.Define("truev0_foundnew_correct", "FCCAnalyses::AlephTruth::trueV0FoundCorrect(trueV0s, v0ntruth, V0sNew_event)")
+
         ############################################# Particle Flow Level Variables #######################################################
         df = df.Define("pfcand_isMu",     "AlephSelection::get_isType(jetConstitutentsTypes,2)")
         df = df.Define("pfcand_isEl",     "AlephSelection::get_isType(jetConstitutentsTypes,1)")
@@ -662,6 +746,26 @@ class Analysis():
                 "v0c_alpha", "v0c_qt", "v0c_trk1", "v0c_trk2",
                 "v0c_pdg", "v0c_invM", "v0c_dxyz", "v0c_p", "v0c_cosPointing",
             ]
+        if self.ana_args.newV0:
+            truth_branches += [
+                "n_v0n_event", "v0n_pdg", "v0n_invM", "v0n_alpha", "v0n_qt",
+                "v0n_chi2", "v0n_dxyz", "v0n_p", "v0n_cosPointing", "v0n_pointSig",
+                "v0n_tight",
+                # per-jet new-module V0s (mirror of the old v0_* block) -> jet-level apples-to-apples
+                "n_v0njet_jets", "n_v0njet_ks", "n_v0njet_lambda",
+                "v0njet_pdg", "v0njet_invM", "v0njet_chi2", "v0njet_chi2_norm",
+                "v0njet_ndof", "v0njet_ntracks", "v0njet_p", "v0njet_prel",
+                "v0njet_thetarel", "v0njet_phirel", "v0njet_dxy", "v0njet_dxyz",
+                "v0njet_cosPointing", "v0njet_correctedMass",
+                "v0njet_dx", "v0njet_dy", "v0njet_dz",
+            ]
+            if self.ana_args.truthV0:
+                truth_branches += [
+                    "v0n_class", "v0n_trueidx", "v0n_pairmult", "v0n_trackshared",
+                    "v0n_trk1", "v0n_trk2",
+                    "truev0_foundnew_any", "truev0_foundnew_correct",
+                ]
+
         return truth_branches + [
             #DEBUG
             "pfcand_dEdx_len", "pfcand_E_len", "pfcand_pval_ele_len",
