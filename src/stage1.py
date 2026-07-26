@@ -38,6 +38,10 @@ class Analysis():
                             help='Run the WP2 standalone V0 module (v0n_* branches; truth classification added when combined with --truthV0 on MC).')
         parser.add_argument('--v0nKsPointing', default=None, type=float,
                             help='DEPRECATED/superseded by the two-tier module; using it is an error.')
+        parser.add_argument('--v0nWideLamLoose', action='store_true',
+                            help='TAIL-MEASUREMENT VARIANT (2026-07-27): loose Lambda AP band widened 0.40/0.80 to measure the band tail. Not for adopted productions.')
+        parser.add_argument('--v0nLamPointKsTiers', action='store_true',
+                            help='SIZING VARIANT (2026-07-26): tight-tier Lambda pointing aligned to the Ks p-tiers (Study-B aligned scenario). Not for adopted productions; candTight still encodes the adopted package.')
         parser.add_argument('--pvchi2', default=5.0, type=float,
                             help='chi2max for PV track compatibility in get_PrimaryTracks (default 5.0 = validated baseline; lower = fewer tracks claimed primary = more secondaries).')
         # Parse additional arguments not known to the FCCAnalyses parsers
@@ -473,6 +477,10 @@ class Analysis():
             df = df.Define("truev0_fd",       "trueV0s.fd")
             df = df.Define("truev0_dpv",      "trueV0s.dpv")
             df = df.Define("truev0_nmatched", "trueV0s.nmatched")
+            # true decay-point components [cm] (2026-07-26: position-resolution studies)
+            df = df.Define("truev0_x",        "trueV0s.vx")
+            df = df.Define("truev0_y",        "trueV0s.vy")
+            df = df.Define("truev0_z",        "trueV0s.vz")
             # candidate track indices back to the original Tracks collection
             df = df.Define("selBaselineOrigIdx", "FCCAnalyses::AlephTruth::selectedBaselineOriginalIndices(Tracks, _Tracks_trackStates, trackstates_selected_baseline)")
             df = df.Define("sec2origIdx",        "FCCAnalyses::AlephTruth::secondaryToOriginalTrack(SecondaryTracks_looseBS, trackstates_selected_baseline_flipped, selBaselineOrigIdx)")
@@ -497,6 +505,10 @@ class Analysis():
             df = df.Define("v0c_dxyz",        "FCCAnalyses::AlephTruth::candDxyz(V0s_event, VertexObject_looseBS)")
             df = df.Define("v0c_p",           "FCCAnalyses::AlephTruth::candP(V0s_event)")
             df = df.Define("v0c_cosPointing", "FCCAnalyses::AlephTruth::candCosPointing(V0s_event, VertexObject_looseBS)")
+            # fitted-vertex position (2026-07-26: position-resolution studies)
+            df = df.Define("v0c_vx",          "FCCAnalyses::AlephTruth::candVtxPos(V0s_event, 0)")
+            df = df.Define("v0c_vy",          "FCCAnalyses::AlephTruth::candVtxPos(V0s_event, 1)")
+            df = df.Define("v0c_vz",          "FCCAnalyses::AlephTruth::candVtxPos(V0s_event, 2)")
             # per-true-V0 found flags
             df = df.Define("truev0_found_any",     "FCCAnalyses::AlephTruth::trueV0FoundAny(trueV0s, v0truth)")
             df = df.Define("truev0_found_correct", "FCCAnalyses::AlephTruth::trueV0FoundCorrect(trueV0s, v0truth, V0s_event)")
@@ -508,7 +520,14 @@ class Analysis():
                       "tier now covers the offline scan range, and v0n_tight/candTight assume the "
                       "adopted tight package. Using it is an error.")
                 exit()
-            df = df.Define("V0sNew_event", f"FCCAnalyses::AlephV0New::findV0s(SecondaryTracks_looseBS, VertexObject_looseBS, {BZ})")
+            if self.ana_args.v0nLamPointKsTiers and self.ana_args.v0nWideLamLoose:
+                print("----> ERROR: --v0nLamPointKsTiers and --v0nWideLamLoose are separate "
+                      "single-purpose variants; combining them is not supported.")
+                exit()
+            v0n_finder = ("findV0sLamKsPointing" if self.ana_args.v0nLamPointKsTiers
+                          else "findV0sWideLamLoose" if self.ana_args.v0nWideLamLoose
+                          else "findV0s")
+            df = df.Define("V0sNew_event", f"FCCAnalyses::AlephV0New::{v0n_finder}(SecondaryTracks_looseBS, VertexObject_looseBS, {BZ})")
             df = df.Define("n_v0n_event",  "int(V0sNew_event.vtx.size())")
             df = df.Define("v0n_pdg",      "V0sNew_event.pdgAbs")
             df = df.Define("v0n_invM",     "V0sNew_event.invM")
@@ -523,6 +542,13 @@ class Analysis():
             # two-tier module (2026-07-25): 1 = adopted tight package, 0 = loose training tier.
             # Selecting v0n_tight==1 reproduces the historical tight-only output exactly.
             df = df.Define("v0n_tight",       "FCCAnalyses::AlephV0New::candTight(V0sNew_event, VertexObject_looseBS, SecondaryTracks_looseBS)")
+            # ML-input pulls (2026-07-27): cut variables in resolution units (signed; -999 undefined).
+            df = df.Define("v0n_bandSig",     "FCCAnalyses::AlephV0New::candBandSig(V0sNew_event, SecondaryTracks_looseBS)")
+            df = df.Define("v0n_massSig",     "FCCAnalyses::AlephV0New::candMassSig(V0sNew_event)")
+            # fitted-vertex position (2026-07-26: position-resolution studies)
+            df = df.Define("v0n_vx",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 0)")
+            df = df.Define("v0n_vy",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 1)")
+            df = df.Define("v0n_vz",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 2)")
             # per-jet new-module V0s: exact mirror of the old-finder v0_* block, run on V0sNew_event.
             # Gives the NEW reco identical jet-level, jet-relative kinematics (prel = pT wrt jet axis,
             # thetarel/phirel = direction wrt jet) so old (v0_*) vs new (v0njet_*) is apples-to-apples.
@@ -743,15 +769,17 @@ class Analysis():
                 "truev0_px", "truev0_py", "truev0_pz",
                 "truev0_fd", "truev0_dpv",
                 "truev0_nmatched", "truev0_nsec", "truev0_found_any", "truev0_found_correct",
+                "truev0_x", "truev0_y", "truev0_z",
                 "v0c_class", "v0c_trueidx", "v0c_pairmult", "v0c_trackshared",
                 "v0c_alpha", "v0c_qt", "v0c_trk1", "v0c_trk2",
                 "v0c_pdg", "v0c_invM", "v0c_dxyz", "v0c_p", "v0c_cosPointing",
+                "v0c_vx", "v0c_vy", "v0c_vz",
             ]
         if self.ana_args.newV0:
             truth_branches += [
                 "n_v0n_event", "v0n_pdg", "v0n_invM", "v0n_alpha", "v0n_qt",
                 "v0n_chi2", "v0n_dxyz", "v0n_p", "v0n_cosPointing", "v0n_pointSig",
-                "v0n_tight",
+                "v0n_tight", "v0n_bandSig", "v0n_massSig", "v0n_vx", "v0n_vy", "v0n_vz",
                 # per-jet new-module V0s (mirror of the old v0_* block) -> jet-level apples-to-apples
                 "n_v0njet_jets", "n_v0njet_ks", "n_v0njet_lambda",
                 "v0njet_pdg", "v0njet_invM", "v0njet_chi2", "v0njet_chi2_norm",

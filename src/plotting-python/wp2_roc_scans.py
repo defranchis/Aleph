@@ -142,7 +142,7 @@ def main():
         S[f"L6_cosPointing_{name}"] = roc(ax, sig, bkg, thr_cp[::-1], False, name, col)
     ax.set_xlabel("signal efficiency"); ax.set_ylabel("background rejection")
     ax.grid(alpha=0.25, lw=0.5); ax.legend(frameon=False, fontsize=8)
-    fig.suptitle(f"L6: cosPointing scan (adopted tiers 0.999/0.9995/0.9999 (Ks), 0.99995 (Λ)){lab}")
+    fig.suptitle(f"L6: cosPointing scan (adopted tiers 0.999/0.9995/0.9999 (Ks), 0.99995/0.9999 C\u2032 (Λ)){lab}")
     fig.tight_layout(); fig.savefig(f"{args.outdir}/roc_L6_cospointing.png", dpi=140); plt.close(fig)
 
     # ---- L7: vertex chi2 (v0n only - well-conditioned single fit) ----

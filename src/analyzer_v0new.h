@@ -68,18 +68,56 @@ constexpr double DIS_LO = 0.1, DIS_HI = 150.;
 constexpr double CHI2_CUT = 10.;
 constexpr double TIGHT_COS_KS_LOWP = 0.999, TIGHT_COS_KS_MIDP = 0.9995,
                  TIGHT_COS_KS_HIGHP = 0.9999;
-constexpr double TIGHT_COS_LAM = 0.99995, TIGHT_QT_MIN_LAM = 0.04;
+// Lambda tight pointing, ADOPTED 2026-07-27 (option C', user decision after
+// the heavy-flavour closure): p-tiered — {x1, x2, x2} loosening in 1-cos
+// relative to the historical flat cut. The original option-C mid tier
+// (0.9995, a x10 loosening) was REVERTED to 0.9999 the same day: the b-event
+// closure measured its 2-4 GeV purity at 0.61 (marginal purity of admitted
+// candidates 33%) — b-decay track pairs point too well for a x10 opening.
+// Deliberately NOT a mirror of the Ks ladder.
+constexpr double TIGHT_COS_LAM_LOWP = 0.99995, TIGHT_COS_LAM_MIDP = 0.9999,
+                 TIGHT_COS_LAM_HIGHP = 0.9999;
+constexpr double TIGHT_QT_MIN_LAM = 0.04;
 constexpr double AP_BAND_KS = 0.05, AP_LAM_LO = 0.10, AP_LAM_HI = 0.20;
 constexpr double TIGHT_NSIG_KS_LOWP = 3., TIGHT_NSIG_KS_HIGHP = 4.;
 constexpr double LOOSE_COS_POINT = 0.999;
 constexpr double LOOSE_QT_MIN_LAM = 0.02;
 constexpr double LOOSE_NSIG_KS = 6.;
 constexpr double LOOSE_LAM_BAND_LO = 0.20, LOOSE_LAM_BAND_HI = 0.40;
+// widened loose Lambda band for the tail-measurement variant (2x nominal)
+constexpr double WIDE_LAM_BAND_LO = 2. * LOOSE_LAM_BAND_LO,
+                 WIDE_LAM_BAND_HI = 2. * LOOSE_LAM_BAND_HI;
 constexpr double LAM_P_LO = 8., LAM_P_HI = 20.;
+// Lambda AP-band ellipse resolution, quadrature Q68 fit on truth-matched
+// Lambda (p>2.5, wp2_final_v5 light flavour; artifacts_sigmamodel
+// t3_lambda LAM_ELL_Q68 quadr3). Note: "nsig" is in Q68 units.
+// Aleph_svproto still carries the pre-C' package (flat TIGHT_COS_LAM,
+// fixed-ramp Lambda band); port deferred to SV round 2.
+constexpr double SIG_ELL_LAM_A = 0.01622, SIG_ELL_LAM_B = 0.0033748,
+                 SIG_ELL_LAM_C = 0.00015544;
+// Ks AP-band ellipse resolution, linear model (signed off 2026-07-23) —
+// single source for the tight/loose band cuts AND the bandSig pull.
+constexpr double SIG_ELL_KS_A = 0.007, SIG_ELL_KS_B = 0.0015;
+constexpr double TIGHT_LAM_NSIG = 3.;
+// Mass resolution sigma_m(p) [GeV], quadrature fits over the full mass
+// window, p>2.5 (artifacts_sigmamodel t1_mass {Ks,Lambda}_FULLWIN_p>2.5
+// quadr3; binned-fit estimator, descriptive) — used by candMassSig.
+constexpr double SIG_M_KS_A = 2.658e-3, SIG_M_KS_B = 0.5214e-3,
+                 SIG_M_KS_C = 0.01418e-3;
+constexpr double SIG_M_LAM_A = 1.045e-3, SIG_M_LAM_B = 0.2357e-3,
+                 SIG_M_LAM_C = 0.005511e-3;
 
 // Shared per-hypothesis acceptance helpers, used by findV0s (both tiers) and
 // candTight (offline re-evaluation of the booked hypothesis).
 inline double ksPointThr(double pmag, double lowp, double midp, double highp) {
+  return (pmag < 2.) ? lowp : (pmag < 4.) ? midp : highp;
+}
+// Lambda tight pointing tiers (option C', adopted 2026-07-27) — same tier
+// boundaries as Ks, different low-p value; single source for findV0s AND
+// candTight.
+inline double lamPointThr(double pmag, double lowp = TIGHT_COS_LAM_LOWP,
+                          double midp = TIGHT_COS_LAM_MIDP,
+                          double highp = TIGHT_COS_LAM_HIGHP) {
   return (pmag < 2.) ? lowp : (pmag < 4.) ? midp : highp;
 }
 inline double ksBandEll(double alpha, double qt, double pmag) {
@@ -88,11 +126,14 @@ inline double ksBandEll(double alpha, double qt, double pmag) {
   double amax = PSTAR_K / (beta * ESTAR_K);
   return std::sqrt(std::pow(alpha / amax, 2) + std::pow(qt / PSTAR_K, 2));
 }
+inline double sigmaEllKs(double pmag) {
+  return SIG_ELL_KS_A + SIG_ELL_KS_B * pmag;
+}
 inline double ksBandThr(double pmag, double floor_, double nsig_lo, double nsig_hi) {
   // resolution-scaled width (signed off 2026-07-23): sigma_ell ~ 0.007+0.0015p;
   // floor_ acts as the low-p floor (bit-identical below ~9.5 GeV at nsig=3)
   double nsig = (pmag < 15.) ? nsig_lo : nsig_hi;
-  return std::max(floor_, nsig * (0.007 + 0.0015 * pmag));
+  return std::max(floor_, nsig * sigmaEllKs(pmag));
 }
 inline double lamBandEll(double alpha, double qt, double pmag) {
   const double PSTAR_L = 0.1005, ALPHA0_L = 0.69157;
@@ -103,6 +144,24 @@ inline double lamBandEll(double alpha, double qt, double pmag) {
 }
 inline double lamBandThr(double pmag, double lo, double hi) {
   return (pmag < LAM_P_LO) ? lo : (pmag < LAM_P_HI) ? lo + (hi - lo) * (pmag - LAM_P_LO) / (LAM_P_HI - LAM_P_LO) : hi;
+}
+inline double sigmaEllLam(double pmag) {
+  return std::sqrt(SIG_ELL_LAM_A * SIG_ELL_LAM_A +
+                   std::pow(SIG_ELL_LAM_B * pmag, 2) +
+                   std::pow(SIG_ELL_LAM_C * pmag * pmag, 2));
+}
+// TIGHT Lambda AP band (user sign-off 2026-07-27): resolution-scaled,
+// floored at the historical low-p edge and CAPPED at the loose storage
+// edge (b/c-verified: +2.0/+3.9pp true Lambda >10 GeV at ~-1.4pp local
+// purity; cap avoids dilute >25 GeV admissions and keeps every tight
+// candidate inside the stored loose superset = offline-reversible).
+// The cap deliberately references the NOMINAL loose edges: the adopted tight
+// package is config-independent (tight remains a subset of any loose band,
+// including the widened tail-measurement variant).
+inline double lamBandThrTight(double pmag, double floor_ = AP_LAM_LO,
+                              double nsig = TIGHT_LAM_NSIG) {
+  return std::min(std::max(floor_, nsig * sigmaEllLam(pmag)),
+                  lamBandThr(pmag, LOOSE_LAM_BAND_LO, LOOSE_LAM_BAND_HI));
 }
 
 // momenta of the two tracks at the fitted vertex (already rescaled to the true
@@ -141,14 +200,17 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
     double ks_m_lo = KS_M_LO, double ks_m_hi = KS_M_HI,        // Ks mass window [GeV] (sidebands kept; common to both tiers)
     double lam_m_lo = LAM_M_LO, double lam_m_hi = LAM_M_HI,    // Lambda mass window [GeV] (common to both tiers)
     double dis_lo = DIS_LO, double dis_hi = DIS_HI,            // displacement window [cm] (common)
-    double cos_point_lam = TIGHT_COS_LAM,              // tight pointing cut, Lambda hyp (adopted 2026-07-22)
+    double cos_point_lam = TIGHT_COS_LAM_LOWP,         // tight Lambda pointing, p<2 GeV tier (option C' 2026-07-27: tiers above use TIGHT_COS_LAM_MIDP/HIGHP via lamPointThr)
     double qt_min_lam = TIGHT_QT_MIN_LAM,              // tight Armenteros qT conversion veto, Lambda hyp [GeV]
     double cos_ks_lowp = TIGHT_COS_KS_LOWP,            // tight Ks pointing, p<2 GeV tier (p-dependent: flat cut crushed low-p Ks)
     double cos_ks_midp = TIGHT_COS_KS_MIDP,            // tight Ks pointing, 2<=p<4 GeV tier
     double ap_band_ks = AP_BAND_KS,                    // Ks exact-locus AP band |ell-1| floor (<=0 disables the band in BOTH tiers)
-    double ap_lam_lo = AP_LAM_LO, double ap_lam_hi = AP_LAM_HI, // tight Lambda band thr(p): lo below 8 GeV, linear to hi at 20 GeV (<=0 off)
+    double ap_lam_lo = AP_LAM_LO, double ap_lam_hi = AP_LAM_HI, // tight Lambda band: lo = floor of the sigma-scaled capped thr (lamBandThrTight; <=0 off); hi retained for signature stability (legacy fixed-ramp edge, no longer read by the tight path)
     double chi2_cut = CHI2_CUT,                        // vertex chi2 (ndf=1, common)
-    double trk_chi2_cut = -1.) {                       // per-track chi2 (<=0 off, common)
+    double trk_chi2_cut = -1.,                         // per-track chi2 (<=0 off, common)
+    bool lam_point_ks_tiers = false,                   // sizing variant (user-approved 2026-07-26): tight Lambda pointing uses the Ks p-tiers instead of cos_point_lam; candTight still encodes the ADOPTED package
+    double loose_lam_lo = LOOSE_LAM_BAND_LO,           // tail-measurement variant (user-approved 2026-07-27): LOOSE Lambda AP band edges,
+    double loose_lam_hi = LOOSE_LAM_BAND_HI) {         // widen to measure the true band tail beyond the stored acceptance
 
   VertexingUtils::FCCAnalysesV0 result;
   const int nTr = np_tracks.size();
@@ -226,10 +288,13 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
       if (okKs && ap_band_ks > 0)
         okKs = std::abs(ksBandEll(alpha, qt, pmag) - 1.) <
                ksBandThr(pmag, ap_band_ks, TIGHT_NSIG_KS_LOWP, TIGHT_NSIG_KS_HIGHP);
-      bool okLam = inWinLam && cp > cos_point_lam && qt > qt_min_lam;
+      double cos_lam_thr = lam_point_ks_tiers
+          ? ksPointThr(pmag, cos_ks_lowp, cos_ks_midp, cos_point_ks)
+          : lamPointThr(pmag, cos_point_lam);
+      bool okLam = inWinLam && cp > cos_lam_thr && qt > qt_min_lam;
       if (okLam && ap_lam_lo > 0)
         okLam = std::abs(lamBandEll(alpha, qt, pmag) - 1.) <
-                lamBandThr(pmag, ap_lam_lo, ap_lam_hi);
+                lamBandThrTight(pmag, ap_lam_lo);
       bool tight = okKs || okLam;
       if (!tight) {
         // LOOSE training tier (signed off 2026-07-25): flat pointing, widened
@@ -241,7 +306,7 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
         okLam = inWinLam && cp > LOOSE_COS_POINT && qt > LOOSE_QT_MIN_LAM;
         if (okLam && ap_lam_lo > 0)
           okLam = std::abs(lamBandEll(alpha, qt, pmag) - 1.) <
-                  lamBandThr(pmag, LOOSE_LAM_BAND_LO, LOOSE_LAM_BAND_HI);
+                  lamBandThr(pmag, loose_lam_lo, loose_lam_hi);
         if (!okKs && !okLam) continue;
       }
       double dks = std::abs(mks - MKS) / (0.5 * (ks_m_hi - ks_m_lo));
@@ -277,6 +342,46 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
 }
 
 // ---------------------------------------------------------------------------
+// Sizing-variant entry point (user-approved 2026-07-26): identical to the
+// adopted findV0s defaults except the tight-tier Lambda pointing is aligned to
+// the Ks p-tiers (0.999 / 0.9995 / 0.9999 for p<2 / 2-4 / >=4 GeV) — the
+// Study-B "aligned" scenario. Defaults are spelled here in C++ next to their
+// constants (single source, no Python-side hand-sync). NOT for adopted
+// productions. NB (skeptic-verified 2026-07-27): the v0n_tight branch in its
+// output STILL encodes the ADOPTED package (candTight re-derivation) — NOT
+// variant-tier membership. Variant-tight must be re-derived offline from
+// kinematics; trusting v0n_tight would silently drop the tier migrants.
+// ---------------------------------------------------------------------------
+inline VertexingUtils::FCCAnalysesV0 findV0sLamKsPointing(
+    const RVec<edm4hep::TrackState>& np_tracks,
+    const VertexingUtils::FCCAnalysesVertex& PV,
+    double solenoidBz = 1.5) {
+  return findV0s(np_tracks, PV, solenoidBz, TIGHT_COS_KS_HIGHP, KS_M_LO, KS_M_HI,
+                 LAM_M_LO, LAM_M_HI, DIS_LO, DIS_HI, TIGHT_COS_LAM_LOWP,
+                 TIGHT_QT_MIN_LAM, TIGHT_COS_KS_LOWP, TIGHT_COS_KS_MIDP,
+                 AP_BAND_KS, AP_LAM_LO, AP_LAM_HI, CHI2_CUT, -1.,
+                 /*lam_point_ks_tiers=*/true);
+}
+
+// ---------------------------------------------------------------------------
+// Tail-measurement entry point (user-approved 2026-07-27, Λ-band decision d):
+// adopted defaults except the LOOSE Lambda AP band widened 0.20/0.40 →
+// 0.40/0.80, so the band tail beyond the standard loose acceptance becomes
+// measurable offline. NOT for adopted productions.
+// ---------------------------------------------------------------------------
+inline VertexingUtils::FCCAnalysesV0 findV0sWideLamLoose(
+    const RVec<edm4hep::TrackState>& np_tracks,
+    const VertexingUtils::FCCAnalysesVertex& PV,
+    double solenoidBz = 1.5) {
+  return findV0s(np_tracks, PV, solenoidBz, TIGHT_COS_KS_HIGHP, KS_M_LO, KS_M_HI,
+                 LAM_M_LO, LAM_M_HI, DIS_LO, DIS_HI, TIGHT_COS_LAM_LOWP,
+                 TIGHT_QT_MIN_LAM, TIGHT_COS_KS_LOWP, TIGHT_COS_KS_MIDP,
+                 AP_BAND_KS, AP_LAM_LO, AP_LAM_HI, CHI2_CUT, -1.,
+                 /*lam_point_ks_tiers=*/false,
+                 WIDE_LAM_BAND_LO, WIDE_LAM_BAND_HI);
+}
+
+// ---------------------------------------------------------------------------
 // Truth-free per-candidate diagnostics (work on data; reco_ind is filled by
 // this module, momenta are already at the true GeV scale).
 // ---------------------------------------------------------------------------
@@ -301,12 +406,15 @@ inline RVec<float> candAlpha(const VertexingUtils::FCCAnalysesV0& v0s,
   return out;
 }
 
-// Offline tight-package flag: 1 if the candidate's BOOKED hypothesis passes the
-// adopted (2026-07-22) tight package, 0 if it entered via the loose training
-// tier. Uses the same shared helpers/constants as findV0s (single source), so
-// selecting candTight==1 reproduces the historical tight-only module output
-// exactly (tight candidates claim tracks first). Assumes the adopted package
-// (i.e. no --v0nKsPointing override in the production). Works on data.
+// Offline tight-package flag: 1 if the candidate's BOOKED hypothesis passes
+// the ADOPTED tight package (Ks: 2026-07-22; Lambda: option-C' pointing
+// tiers + 3sigma-capped AP band, 2026-07-27), 0 if it entered via the loose
+// training tier. Uses the same shared helpers/constants as findV0s (single
+// source). NOTE cross-production semantics: productions BEFORE 2026-07-27
+// carry earlier flag definitions (flat Lambda pointing and/or fixed-ramp
+// band) — v0n_tight is NOT comparable across eras; any tighter historical
+// package remains re-derivable offline from the stored loose tier. Assumes
+// the adopted package (no variant override in the production). Works on data.
 inline RVec<int> candTight(const VertexingUtils::FCCAnalysesV0& v0s,
                            const VertexingUtils::FCCAnalysesVertex& PV,
                            const RVec<edm4hep::TrackState>& secondaries) {
@@ -342,12 +450,74 @@ inline RVec<int> candTight(const VertexingUtils::FCCAnalysesV0& v0s,
         ok = std::abs(ksBandEll(alpha, qt, pmag) - 1.) <
              ksBandThr(pmag, AP_BAND_KS, TIGHT_NSIG_KS_LOWP, TIGHT_NSIG_KS_HIGHP);
     } else {
-      ok = (m > LAM_M_LO && m < LAM_M_HI) && cp > TIGHT_COS_LAM && qt > TIGHT_QT_MIN_LAM;
+      ok = (m > LAM_M_LO && m < LAM_M_HI) && cp > lamPointThr(pmag) && qt > TIGHT_QT_MIN_LAM;
       if (ok)
         ok = std::abs(lamBandEll(alpha, qt, pmag) - 1.) <
-             lamBandThr(pmag, AP_LAM_LO, AP_LAM_HI);
+             lamBandThrTight(pmag);
     }
     out.push_back(ok ? 1 : 0);
+  }
+  return out;
+}
+
+// ML-input pulls (2026-07-27, user request): the selection variables the
+// module cuts on, expressed in resolution units so trainers need no sigma
+// models of their own. Both SIGNED; -999 = undefined candidate.
+// bandSig: (bandEll - 1) / sigma_ell(p) of the BOOKED hypothesis
+//          (Ks: linear 0.007+0.0015p, signed off 2026-07-23; Lambda:
+//          quadrature Q68 sigmaEllLam). The tight cut is |bandSig|-based
+//          for Lambda (nsig=3 capped), so this is the cut variable itself.
+// massSig: (invM - m_hyp) / sigma_m(p), quadrature fits (MeV coefficients
+//          Ks {2.658, 0.5214, 0.01418}, Lambda {1.045, 0.2357, 0.005511};
+//          binned-fit estimator, descriptive). First shipped consumer of
+//          the sigma_mass models. Remaining cut variables (cosPointing,
+//          qt, chi2, dxyz, p, invM) are already stored raw; threshold
+//          margins are offline-derivable from them + the shared helpers.
+inline RVec<float> candBandSig(const VertexingUtils::FCCAnalysesV0& v0s,
+                               const RVec<edm4hep::TrackState>& secondaries) {
+  RVec<float> out;
+  for (size_t c = 0; c < v0s.vtx.size(); ++c) {
+    const auto& v = v0s.vtx[c];
+    if (v.reco_ind.size() < 2 || v.updated_track_momentum_at_vertex.size() < 2 ||
+        v.reco_ind[0] < 0 || v.reco_ind[0] >= (int)secondaries.size()) {
+      out.push_back(-999.);
+      continue;
+    }
+    TVector3 p1 = v.updated_track_momentum_at_vertex[0];
+    TVector3 p2 = v.updated_track_momentum_at_vertex[1];
+    TVector3 p = p1 + p2;
+    double pmag = p.Mag();
+    if (pmag <= 0) { out.push_back(-999.); continue; }
+    double qt = p1.Cross(p.Unit()).Mag();
+    double la = p1.Dot(p) / pmag, lb = p2.Dot(p) / pmag;
+    double q1 = (secondaries[v.reco_ind[0]].omega < 0) ? 1. : -1.;
+    double lplus = (q1 > 0) ? la : lb, lminus = (q1 > 0) ? lb : la;
+    double alpha = (lplus + lminus != 0.) ? (lplus - lminus) / (lplus + lminus) : 0.;
+    if (v0s.pdgAbs[c] == 310)
+      out.push_back((ksBandEll(alpha, qt, pmag) - 1.) / sigmaEllKs(pmag));
+    else
+      out.push_back((lamBandEll(alpha, qt, pmag) - 1.) / sigmaEllLam(pmag));
+  }
+  return out;
+}
+
+inline RVec<float> candMassSig(const VertexingUtils::FCCAnalysesV0& v0s) {
+  RVec<float> out;
+  for (size_t c = 0; c < v0s.vtx.size(); ++c) {
+    const auto& v = v0s.vtx[c];
+    if (v.updated_track_momentum_at_vertex.size() < 2) {
+      out.push_back(-999.);
+      continue;
+    }
+    TVector3 p = v.updated_track_momentum_at_vertex[0] +
+                 v.updated_track_momentum_at_vertex[1];
+    double pmag = p.Mag(), p2 = pmag * pmag;
+    bool isKs = (v0s.pdgAbs[c] == 310);
+    double a = isKs ? SIG_M_KS_A : SIG_M_LAM_A;
+    double b = isKs ? SIG_M_KS_B : SIG_M_LAM_B;
+    double cc = isKs ? SIG_M_KS_C : SIG_M_LAM_C;
+    double sig = std::sqrt(a * a + b * b * p2 + cc * cc * p2 * p2);
+    out.push_back((v0s.invM[c] - (isKs ? MKS : MLAM)) / sig);
   }
   return out;
 }
