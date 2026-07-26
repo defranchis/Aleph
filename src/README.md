@@ -45,6 +45,32 @@ Output files will be in: `/eos/experiment/fcc/ee/analyses/case-studies/aleph/pro
 
 
 
+### The two-tier V0 module (`--newV0`)
+
+Standalone V0 (Ks/Λ) reconstruction in [`analyzer_v0new.h`](analyzer_v0new.h), enabled with `--newV0`. It is *V0-first* by design: its track claims are meant to be consumed downstream (secondary-vertex finding runs on the unclaimed tracks), so the module optimises the correctness of each claim, not just the candidate list.
+
+**Candidate building.** All opposite-charge secondary track pairs are vertexed with a single consistent fit (`VertexFitter_Tk`); every downstream quantity (momenta, invariant masses under both hypotheses, Armenteros–Podolanski (AP) variables, pointing) is derived from the refitted momenta at that vertex — there is no second fit.
+
+**Two selection tiers, evaluated per hypothesis (Ks and Λ):**
+
+- **Tight** — the adopted physics selection: mass window; momentum-tiered pointing cut (separate Ks and Λ ladders, `ksPointThr` / `lamPointThr`); a qT veto against photon conversions (Λ only); and a resolution-scaled AP-band cut around the exact kinematic locus — the band half-width follows the measured σ_ell(p) of each species (`ksBandThr`, `lamBandThrTight`; the Λ band is floored at low p and capped at the loose-band edge), plus common fit-quality (χ²) and displacement requirements.
+- **Loose** — the ML-training tier: same windows/χ²/displacement, but flat pointing, widened AP bands and a relaxed Λ qT veto. It is a strict superset of tight and is what gets stored, so *any* tighter selection (including the historical ones) can be re-derived offline from any production.
+
+**Hypothesis arbitration.** A pair passing both hypotheses is booked as the one whose invariant mass is closer to its window centre (normalised by the window half-width).
+
+**Exclusive claiming, tight first.** Candidates claim their tracks exclusively in quality order: all tight candidates claim before any loose one, and within a tier the best-χ² candidate claims first. A track is claimed once; later candidates using it are dropped. This preserves the tight-only output exactly regardless of the loose tier, and defines the track set left to the SV finder.
+
+**Stored flags and ML inputs.** `v0n_tight` re-derives the adopted tight package offline from the same single-source helpers (booking a candidate ≠ selecting it). `v0n_bandSig` and `v0n_massSig` store the AP-band and mass cut variables as signed pulls in resolution units for training; all other cut variables (cosPointing, pointSig, qT, χ², displacement, p, invM) are stored raw.
+
+**Output branches.** Two groups, both added only when `--newV0` is given:
+
+- `n_v0n_event`, `v0n_pdg`, `v0n_invM`, `v0n_alpha`, `v0n_qt`, `v0n_chi2`, `v0n_dxyz`, `v0n_p`, `v0n_cosPointing`, `v0n_pointSig`, `v0n_tight`, `v0n_bandSig`, `v0n_massSig`, `v0n_vx/vy/vz` — event-order candidate quantities, independent of jet assignment.
+- `n_v0njet_jets`, `n_v0njet_ks`, `n_v0njet_lambda` and `v0njet_*` — the new candidates pushed through the same per-jet assignment and jet-relative getters as the existing `v0_*` block, so old vs new is an apples-to-apples comparison at jet level.
+
+The flag is opt-in and purely additive: without it the stage1 output is unchanged, branch-for-branch and value-for-value.
+
+**Further utilities in the headers.** [`analyzer_v0new.h`](analyzer_v0new.h) also carries alternative wrapper entry points for systematic studies (e.g. Λ pointing aligned to the Ks ladder, or a widened loose-Λ AP band for measuring the band tail), and [`analyzer_truth.h`](analyzer_truth.h) carries MC truth-matching utilities (true-V0 finding, track↔MC index recovery, candidate truth classification) used to derive the tunings above. Neither is wired to a stage1 command line argument here; they are called from analysis forks that need them. `analyzer_truth.h` is included by `--newV0` only for its truth-free candidate accessors (`candChi2`, `candDxyz`, `candP`, `candCosPointing`, `candVtxPos`).
+
 ### STAGE 2:
 
 Don't touch stage2.py!

@@ -2,6 +2,8 @@
 import os
 from argparse import ArgumentParser
 
+BZ = 1.5  # solenoid field [T] - single source for the stage1 Define strings
+
 class Analysis():
 
     def __init__(self, cmdline_args):
@@ -27,6 +29,8 @@ class Analysis():
                             help='Run tester file only for validation against Lukas ntuples.')
         parser.add_argument('--chunks', default=None, type=int,
                             help='Number of chunks per process/file')
+        parser.add_argument('--newV0', action='store_true',
+                            help='Also run the standalone two-tier V0 reconstruction module, adding the v0n_*/v0njet_* branches alongside the existing v0_* ones.')
         # Parse additional arguments not known to the FCCAnalyses parsers
         # All command line arguments know to fccanalysis are provided in the
         # `cmdline_arg` dictionary.
@@ -140,6 +144,11 @@ class Analysis():
         #set run options:
         
         self.include_paths = ["analyzer.h"]
+        if self.ana_args.newV0:
+            # analyzer_truth.h is included for its truth-free candidate accessors
+            # (candChi2/candDxyz/candP/candCosPointing/candVtxPos), which the
+            # v0n_* branches share with the truth-matching utilities living there.
+            self.include_paths += ["analyzer_truth.h", "analyzer_v0new.h"]
 
         # #submit to batch if requested:
         # self.run_batch = self.ana_args.batch # no longer supported
@@ -412,6 +421,56 @@ class Analysis():
         df = df.Define("v0_dy",  "FCCAnalyses::AlephSelection::get_dy_SV_jets(v0_jets, PrimaryVertexP3)")
         df = df.Define("v0_dz",  "FCCAnalyses::AlephSelection::get_dz_SV_jets(v0_jets, PrimaryVertexP3)")
 
+        ############################################# Standalone two-tier V0 module (--newV0) ###################################
+        if self.ana_args.newV0:
+            df = df.Define("V0sNew_event", f"FCCAnalyses::AlephV0New::findV0s(SecondaryTracks_looseBS, VertexObject_looseBS, {BZ})")
+            df = df.Define("n_v0n_event",  "int(V0sNew_event.vtx.size())")
+            df = df.Define("v0n_pdg",      "V0sNew_event.pdgAbs")
+            df = df.Define("v0n_invM",     "V0sNew_event.invM")
+            # candidate kinematics, event order (independent of jet assignment)
+            df = df.Define("v0n_alpha",       "FCCAnalyses::AlephV0New::candAlpha(V0sNew_event, SecondaryTracks_looseBS)")
+            df = df.Define("v0n_qt",          "FCCAnalyses::AlephV0New::candQt(V0sNew_event)")
+            df = df.Define("v0n_chi2",        "FCCAnalyses::AlephTruth::candChi2(V0sNew_event)")
+            df = df.Define("v0n_dxyz",        "FCCAnalyses::AlephTruth::candDxyz(V0sNew_event, VertexObject_looseBS)")
+            df = df.Define("v0n_p",           "FCCAnalyses::AlephTruth::candP(V0sNew_event)")
+            df = df.Define("v0n_cosPointing", "FCCAnalyses::AlephTruth::candCosPointing(V0sNew_event, VertexObject_looseBS)")
+            df = df.Define("v0n_pointSig",    "FCCAnalyses::AlephV0New::candPointSig(V0sNew_event, VertexObject_looseBS)")
+            # two-tier module: 1 = adopted tight package, 0 = loose training tier.
+            # Selecting v0n_tight==1 reproduces the tight-only output exactly.
+            df = df.Define("v0n_tight",       "FCCAnalyses::AlephV0New::candTight(V0sNew_event, VertexObject_looseBS, SecondaryTracks_looseBS)")
+            # ML-input pulls: cut variables in resolution units (signed; -999 undefined).
+            df = df.Define("v0n_bandSig",     "FCCAnalyses::AlephV0New::candBandSig(V0sNew_event, SecondaryTracks_looseBS)")
+            df = df.Define("v0n_massSig",     "FCCAnalyses::AlephV0New::candMassSig(V0sNew_event)")
+            # fitted-vertex position (position-resolution studies)
+            df = df.Define("v0n_vx",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 0)")
+            df = df.Define("v0n_vy",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 1)")
+            df = df.Define("v0n_vz",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 2)")
+            # per-jet new-module V0s: exact mirror of the old-finder v0_* block, run on V0sNew_event.
+            # Gives the NEW reco identical jet-level, jet-relative kinematics (prel = pT wrt jet axis,
+            # thetarel/phirel = direction wrt jet) so old (v0_*) vs new (v0njet_*) is apples-to-apples.
+            df = df.Define("v0njet_per_jet", "FCCAnalyses::AlephSelection::assign_V0s_to_jets(V0sNew_event, jets)")
+            df = df.Define("v0njet_jets",  "v0njet_per_jet.vtx")
+            df = df.Define("v0njet_pdg",   "v0njet_per_jet.pdgAbs")
+            df = df.Define("v0njet_invM",  "v0njet_per_jet.invM")
+            df = df.Define("n_v0njet_jets",    "FCCAnalyses::VertexingUtils::get_n_SV_jets(v0njet_jets)")
+            df = df.Define("n_v0njet_ks",      "FCCAnalyses::AlephSelection::count_V0type_jets(v0njet_pdg, 310)")
+            df = df.Define("n_v0njet_lambda",  "FCCAnalyses::AlephSelection::count_V0type_jets(v0njet_pdg, 3122)")
+            df = df.Define("v0njet_chi2",          "FCCAnalyses::VertexingUtils::get_chi2_SV(v0njet_jets)")
+            df = df.Define("v0njet_chi2_norm",     "FCCAnalyses::VertexingUtils::get_norm_chi2_SV(v0njet_jets)")
+            df = df.Define("v0njet_ndof",          "FCCAnalyses::VertexingUtils::get_nDOF_SV(v0njet_jets)")
+            df = df.Define("v0njet_ntracks",       "FCCAnalyses::VertexingUtils::get_VertexNtrk(v0njet_jets)")
+            df = df.Define("v0njet_p",             "FCCAnalyses::VertexingUtils::get_pMag_SV(v0njet_jets)")
+            df = df.Define("v0njet_prel",          "FCCAnalyses::AlephSelection::get_prel_SV_jets(v0njet_jets, jets)")
+            df = df.Define("v0njet_thetarel",      "FCCAnalyses::VertexingUtils::get_relTheta_SV(v0njet_jets, jets)")
+            df = df.Define("v0njet_phirel",        "FCCAnalyses::VertexingUtils::get_relPhi_SV(v0njet_jets, jets)")
+            df = df.Define("v0njet_dxy",           "FCCAnalyses::VertexingUtils::get_dxy_SV(v0njet_jets, VertexObject_looseBS)")
+            df = df.Define("v0njet_dxyz",          "FCCAnalyses::VertexingUtils::get_d3d_SV(v0njet_jets, VertexObject_looseBS)")
+            df = df.Define("v0njet_cosPointing",   "FCCAnalyses::AlephSelection::get_pointingangle_SV(v0njet_jets, VertexObject_looseBS)")
+            df = df.Define("v0njet_correctedMass", "FCCAnalyses::AlephSelection::get_correctedInvMass_SV(v0njet_jets, VertexObject_looseBS)")
+            df = df.Define("v0njet_dx",  "FCCAnalyses::AlephSelection::get_dx_SV_jets(v0njet_jets, PrimaryVertexP3)")
+            df = df.Define("v0njet_dy",  "FCCAnalyses::AlephSelection::get_dy_SV_jets(v0njet_jets, PrimaryVertexP3)")
+            df = df.Define("v0njet_dz",  "FCCAnalyses::AlephSelection::get_dz_SV_jets(v0njet_jets, PrimaryVertexP3)")
+
         ############################################# Particle Flow Level Variables #######################################################
         df = df.Define("pfcand_isMu",     "AlephSelection::get_isType(jetConstitutentsTypes,2)")
         df = df.Define("pfcand_isEl",     "AlephSelection::get_isType(jetConstitutentsTypes,1)")
@@ -602,7 +661,23 @@ class Analysis():
 
     def output(self):
 
-        return [
+        # opt-in block: empty unless --newV0 was requested
+        v0new_branches = []
+        if self.ana_args.newV0:
+            v0new_branches = [
+                "n_v0n_event", "v0n_pdg", "v0n_invM", "v0n_alpha", "v0n_qt",
+                "v0n_chi2", "v0n_dxyz", "v0n_p", "v0n_cosPointing", "v0n_pointSig",
+                "v0n_tight", "v0n_bandSig", "v0n_massSig", "v0n_vx", "v0n_vy", "v0n_vz",
+                # per-jet new-module V0s (mirror of the old v0_* block) -> jet-level apples-to-apples
+                "n_v0njet_jets", "n_v0njet_ks", "n_v0njet_lambda",
+                "v0njet_pdg", "v0njet_invM", "v0njet_chi2", "v0njet_chi2_norm",
+                "v0njet_ndof", "v0njet_ntracks", "v0njet_p", "v0njet_prel",
+                "v0njet_thetarel", "v0njet_phirel", "v0njet_dxy", "v0njet_dxyz",
+                "v0njet_cosPointing", "v0njet_correctedMass",
+                "v0njet_dx", "v0njet_dy", "v0njet_dz",
+            ]
+
+        return v0new_branches + [
             #DEBUG
             "pfcand_dEdx_len", "pfcand_E_len", "pfcand_pval_ele_len",
 
