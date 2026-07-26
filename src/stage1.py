@@ -125,6 +125,15 @@ class Analysis():
 
         else:
             self.input_dir = f"/eos/experiment/aleph/EDM4HEP/MC/{self.ana_args.year}/"
+            # Optional local re-clustered input copy (raw files have ~3 TTree
+            # clusters, capping RDataFrame at ~3-4 threads; a re-clustered copy
+            # lifts the cap — see the tester's /tmp/reclus_input analogue).
+            # Opt-in via env var so production paths are untouched by default.
+            import os
+            _reclus = os.environ.get("ALEPH_RECLUS_DIR")
+            if _reclus and os.path.isdir(_reclus):
+                print(f"----> INPUT OVERRIDE (ALEPH_RECLUS_DIR): {_reclus}")
+                self.input_dir = _reclus
             # self.output_dir = "."
 
             #set the output file name depending on resonance flavour 
