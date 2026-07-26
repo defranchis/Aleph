@@ -28,6 +28,12 @@
 #include <bitset>
 #include <cmath>
 #include <vector>
+#include <map>
+#include <mutex>
+#include <fstream>
+#include <string>
+#include <cstdlib>
+#include <nlohmann/json.hpp>
 #include <ROOT/RVec.hxx>
 
 #include "FCCAnalyses/JetConstituentsUtils.h"
@@ -739,6 +745,88 @@ flipD0_copy(const ROOT::VecOps::RVec<edm4hep::TrackState>& tracks) {
 
 
 
+// ===========================================================================
+// Beamspot position (data only)
+// ===========================================================================
+//
+// ALEPH's beamspot is offset from the origin by ~0.6 mm in x and ~0.2 mm in y.
+// That is 2-3x the transverse beamspot widths used to constrain the primary
+// vertex fit, so for DATA the position must be supplied; leaving it at the
+// origin biases the constraint. In simulation the beamspot is at the origin by
+// construction, so this is not needed there.
+//
+// One entry point: get_beamspot(run). It loads and caches data/beamspot.json on
+// first use and returns the position for that run, or (0,0,0) if the run is not
+// listed (same fallback as the reference implementation).
+//
+// Units: the json stores cm. The FCCAnalyses vertex fitters want the beamspot
+// position in the same units as their widths, which we pass as "10 um"
+// (res_x_loose/10. etc. in stage1.py), hence the cm -> 10um factor of 1e3.
+// Pass `in_10um = false` to get plain cm back instead.
+//
+// The json path resolves in this order:
+//   1. the `path` argument, if non-empty
+//   2. $ALEPH_BEAMSPOT_JSON
+//   3. <this repo>/data/beamspot.json
+//
+TVector3 get_beamspot(int run, bool in_10um = true, const std::string &path = "")
+{
+  // Loaded once on first call and cached. The static initialiser is thread-safe
+  // (C++11 magic statics), which matters because RDataFrame runs multi-threaded.
+  // Note: only the FIRST call's `path` is used - later calls reuse the cache.
+  static const std::map<int, TVector3> coords = [path]() {
+    std::map<int, TVector3> m;   // cm; left empty if anything goes wrong -> origin everywhere
+
+    std::string file = path;
+    if (file.empty()) {
+      if (const char *env = std::getenv("ALEPH_BEAMSPOT_JSON")) file = env;
+    }
+    if (file.empty()) {
+      // default: alongside this header, ../data/beamspot.json
+      std::string self = __FILE__;
+      size_t slash = self.find_last_of('/');
+      file = (slash == std::string::npos ? std::string(".") : self.substr(0, slash))
+             + "/../data/beamspot.json";
+    }
+
+    std::ifstream in(file);
+    if (!in.good()) {
+      std::cerr << "WARNING [get_beamspot]: could not open '" << file
+                << "' - using a beamspot at the origin for every run. "
+                << "That is correct for simulation but WRONG for data." << std::endl;
+      return m;
+    }
+    try {
+      nlohmann::json j;
+      in >> j;
+      for (auto it = j.begin(); it != j.end(); ++it) {
+        const auto &v = it.value();
+        if (!v.contains("x") || !v.contains("y") || !v.contains("z")) continue;
+        m[std::stoi(it.key())] =
+            TVector3(v["x"].get<double>(), v["y"].get<double>(), v["z"].get<double>());
+      }
+    } catch (const std::exception &e) {
+      std::cerr << "WARNING [get_beamspot]: failed to parse '" << file
+                << "' (" << e.what() << ") - using the origin for every run." << std::endl;
+      return std::map<int, TVector3>{};
+    }
+    std::cout << "INFO [get_beamspot]: loaded " << m.size()
+              << " runs from " << file << std::endl;
+    return m;
+  }();
+
+  TVector3 bs(0., 0., 0.);   // fallback: unknown run, or file missing/unparsable
+  auto it = coords.find(run);
+  if (it != coords.end()) bs = it->second;
+  return in_10um ? bs * 1e3 : bs;   // cm -> 10 um
+}
+
+// convenience accessors so stage1.py can Define scalar columns directly
+double get_beamspot_x(int run) { return get_beamspot(run).X(); }
+double get_beamspot_y(int run) { return get_beamspot(run).Y(); }
+double get_beamspot_z(int run) { return get_beamspot(run).Z(); }
+
+
 auto cast_constituent = [](const auto &jcs, auto &&meth)
     {
       rv::RVec<FCCAnalysesJetConstituentsData> out;
@@ -763,6 +851,134 @@ rv::RVec<FCCAnalysesJetConstituentsData> get_pz(const rv::RVec<FCCAnalysesJetCon
     {
       return cast_constituent(jcs, ReconstructedParticle::get_pz);
     }
+
+// ---------------------------------------------------------------------------
+// Jet-constituent variables missing from FCCAnalyses' JetConstituentsUtils.
+// Definitions follow the reference ntuplizer so the outputs are comparable.
+// ---------------------------------------------------------------------------
+
+// ptrel = constituent pT / jet pT  (a ratio, exactly like erel - NOT the
+// component of the momentum perpendicular to the jet axis).
+rv::RVec<FCCAnalysesJetConstituentsData>
+get_ptrel_cluster(const rv::RVec<fastjet::PseudoJet> &jets,
+                  const rv::RVec<FCCAnalysesJetConstituents> &jcs)
+{
+  rv::RVec<FCCAnalysesJetConstituentsData> out;
+  for (size_t i = 0; i < jets.size(); ++i) {
+    auto &jet_csts = out.emplace_back();
+    double pt_jet = jets.at(i).pt();
+    auto csts = FCCAnalyses::JetConstituentsUtils::get_jet_constituents(jcs, i);
+    for (const auto &jc : csts) {
+      TLorentzVector jcvec;
+      jcvec.SetXYZM(jc.momentum.x, jc.momentum.y, jc.momentum.z, jc.mass);
+      jet_csts.emplace_back(pt_jet > 0. ? jcvec.Pt() / pt_jet : 1.);
+    }
+  }
+  return out;
+}
+
+rv::RVec<FCCAnalysesJetConstituentsData>
+get_ptrel_log_cluster(const rv::RVec<fastjet::PseudoJet> &jets,
+                      const rv::RVec<FCCAnalysesJetConstituents> &jcs)
+{
+  rv::RVec<FCCAnalysesJetConstituentsData> out;
+  for (const auto &jet_csts : get_ptrel_cluster(jets, jcs)) {
+    auto &o = out.emplace_back();
+    for (const auto &v : jet_csts) o.emplace_back(float(std::log10(v)));
+  }
+  return out;
+}
+
+// --- per-constituent track quality -----------------------------------------
+// A ReconstructedParticle points at its track via tracks_begin; neutral
+// constituents have no track, for which we store -1 (as the reference does).
+
+rv::RVec<FCCAnalysesJetConstituentsData>
+get_constituent_trackQuality(const rv::RVec<FCCAnalysesJetConstituents> &jcs,
+                             const rv::RVec<edm4hep::TrackData> &tracks,
+                             int mode) // 0 = chi2, 1 = ndof, 2 = chi2/ndof
+{
+  rv::RVec<FCCAnalysesJetConstituentsData> out;
+  for (const auto &jet_csts : jcs) {
+    auto &o = out.emplace_back();
+    for (const auto &p : jet_csts) {
+      float val = -1.;
+      // tracks_begin != tracks_end is the actual "has a track" test: for a neutral particle
+      // tracks_begin still holds an in-range index, so a bare `tracks_begin < tracks.size()`
+      // silently reads ANOTHER particle's track (verified: it mislabels ~99% of neutrals).
+      size_t trackIndex = p.tracks_begin;
+      if (p.tracks_begin != p.tracks_end && trackIndex < tracks.size()) {
+        const edm4hep::TrackData &tr = tracks.at(trackIndex);
+        if      (mode == 0) val = tr.chi2;
+        else if (mode == 1) val = tr.ndf;
+        else                val = (tr.ndf != 0) ? tr.chi2 / float(tr.ndf) : -1.;
+      }
+      o.emplace_back(val);
+    }
+  }
+  return out;
+}
+
+rv::RVec<FCCAnalysesJetConstituentsData>
+get_constituent_trackChi2(const rv::RVec<FCCAnalysesJetConstituents> &jcs,
+                          const rv::RVec<edm4hep::TrackData> &tracks)
+{ return get_constituent_trackQuality(jcs, tracks, 0); }
+
+rv::RVec<FCCAnalysesJetConstituentsData>
+get_constituent_trackNdof(const rv::RVec<FCCAnalysesJetConstituents> &jcs,
+                          const rv::RVec<edm4hep::TrackData> &tracks)
+{ return get_constituent_trackQuality(jcs, tracks, 1); }
+
+rv::RVec<FCCAnalysesJetConstituentsData>
+get_constituent_trackChi2Norm(const rv::RVec<FCCAnalysesJetConstituents> &jcs,
+                              const rv::RVec<edm4hep::TrackData> &tracks)
+{ return get_constituent_trackQuality(jcs, tracks, 2); }
+
+// --- per-constituent subdetector hit counts --------------------------------
+// subdetectorNumber assumes inside-out ordering: 0 = VDET, 1 = ITC, 2 = TPC.
+rv::RVec<FCCAnalysesJetConstituentsData>
+get_constituent_nTrackHits(const rv::RVec<FCCAnalysesJetConstituents> &jcs,
+                           const rv::RVec<edm4hep::TrackData> &tracks,
+                           const rv::RVec<int> &subdetectorHitNumbers,
+                           int subdetectorNumber)
+{
+  rv::RVec<FCCAnalysesJetConstituentsData> out;
+  for (const auto &jet_csts : jcs) {
+    auto &o = out.emplace_back();
+    for (const auto &p : jet_csts) {
+      float nHits = -1.;
+      // see note in get_constituent_trackQuality: neutrals need the begin!=end test
+      size_t trackIndex = p.tracks_begin;
+      if (p.tracks_begin != p.tracks_end && trackIndex < tracks.size()) {
+        const edm4hep::TrackData &tr = tracks.at(trackIndex);
+        size_t hitIdx = tr.subdetectorHitNumbers_begin + subdetectorNumber;
+        if (hitIdx < subdetectorHitNumbers.size())
+          nHits = subdetectorHitNumbers.at(hitIdx);
+      }
+      o.emplace_back(nHits);
+    }
+  }
+  return out;
+}
+
+rv::RVec<FCCAnalysesJetConstituentsData>
+get_constituent_nTrackHits_VDET(const rv::RVec<FCCAnalysesJetConstituents> &jcs,
+                                const rv::RVec<edm4hep::TrackData> &tracks,
+                                const rv::RVec<int> &shn)
+{ return get_constituent_nTrackHits(jcs, tracks, shn, 0); }
+
+rv::RVec<FCCAnalysesJetConstituentsData>
+get_constituent_nTrackHits_ITC(const rv::RVec<FCCAnalysesJetConstituents> &jcs,
+                               const rv::RVec<edm4hep::TrackData> &tracks,
+                               const rv::RVec<int> &shn)
+{ return get_constituent_nTrackHits(jcs, tracks, shn, 1); }
+
+rv::RVec<FCCAnalysesJetConstituentsData>
+get_constituent_nTrackHits_TPC(const rv::RVec<FCCAnalysesJetConstituents> &jcs,
+                               const rv::RVec<edm4hep::TrackData> &tracks,
+                               const rv::RVec<int> &shn)
+{ return get_constituent_nTrackHits(jcs, tracks, shn, 2); }
+
 
 rv::RVec<rv::RVec<int>> mask(const rv::RVec<FCCAnalysesJetConstituentsData> &energies)
     {

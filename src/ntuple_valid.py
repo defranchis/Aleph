@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+import os
 import sys
+import glob
 import math
 import argparse
 import ROOT
@@ -39,15 +41,33 @@ def values_equal(val1, val2, rtol=RTOL):
     return val1 == val2
 
 
+# helper to get a tree from either a single .root file or a directory of chunk_*.root
+# (the batch productions are chunked, e.g. <tag>/Zbb/QQB/chunk_*.root, so a plain TFile
+# is not enough). Returns the tree; the caller must keep the returned owner alive, else
+# ROOT garbage-collects the file/chain underneath the tree.
+def open_tree(path, tree_name):
+    if os.path.isdir(path):
+        chain = ROOT.TChain(tree_name)
+        chunks = sorted(glob.glob(os.path.join(path, "**", "chunk_*.root"), recursive=True))
+        if not chunks:
+            raise RuntimeError(f"No chunk_*.root found under directory: {path}")
+        for c in chunks:
+            chain.Add(c)
+        print(f"  chained {len(chunks)} chunks from {path}")
+        return chain, chain
+
+    f = ROOT.TFile.Open(path)
+    if not f or f.IsZombie():
+        raise RuntimeError(f"Cannot open file: {path}")
+    tree = f.Get(tree_name)
+    if not tree:
+        raise RuntimeError(f"Cannot find tree '{tree_name}' in {path}")
+    return f, tree
+
+
 # helper function which returns the unique run & event_number combinations in a file as python set
 def load_events(filename, tree_name, run_branch, event_branch, do_flavour_filter = False, flavour_val = 5):
-    file = ROOT.TFile.Open(filename)
-    if not file or file.IsZombie():
-        raise RuntimeError(f"Cannot open file: {filename}")
-
-    tree = file.Get(tree_name)
-    if not tree:
-        raise RuntimeError(f"Cannot find tree '{tree_name}' in {filename}")
+    owner, tree = open_tree(filename, tree_name)   # keep `owner` referenced until we are done
 
     events = set()
 
@@ -77,7 +97,7 @@ def load_events(filename, tree_name, run_branch, event_branch, do_flavour_filter
 
         events.add((int(run), int(evt)))
 
-    file.Close()
+    del owner   # release the TFile / TChain
     return events
 
 # function that compares the common events branch by branch
@@ -92,13 +112,10 @@ def compare_events(filepath1, filepath2,
     print("file1:", filepath1)
     print("file2:", filepath2)
 
-    #open files again
-    file1 = ROOT.TFile.Open(filepath1)
-    file2 = ROOT.TFile.Open(filepath2)
-
-    # get the tree in each file
-    tree1 = file1.Get(tree_name)
-    tree2 = file2.Get(tree_name)
+    # open again - either a single file or a directory of chunks
+    # (owner1/owner2 must stay in scope, they keep the TFile/TChain alive)
+    owner1, tree1 = open_tree(filepath1, tree_name)
+    owner2, tree2 = open_tree(filepath2, tree_name)
 
     # Build ROOT internal indices
     print("Building indices...")
@@ -178,6 +195,8 @@ def main():
                           do_flavour_filter = not args.all_flavours, flavour_val = 5.)
     print(f"File1: {len(events1)} events")
 
+    # either a single .root file, or a directory of chunks (batch productions are chunked,
+    # the directory is chained automatically - see open_tree)
     file2 = args.file2
     run_branch_2 = "run_number"
     event_branch_2 = "event_number"
@@ -205,11 +224,15 @@ def main():
         #"name":"(name_file1, name_file2)",
         "run":("runNumber", "run_number"),
         "event":("eventNumber", "event_number"),
-        #input to the primary vertex fit:
+        # input track collections (what goes INTO the primary vertex fit).
+        # These should agree in every event - if they don't, the disagreement is upstream of
+        # the vertex fit and nothing below is meaningful.
         "n_tracks_all":("Event_nTracks", "n_tracks_all"),
         "n_selected_tracks":("Event_nSelectedTracks", "n_tracks_sel"),
-        # # "n_selected_tracks_vertex":("", "n_trackstates_sel"), #luka doesnt store this?
-        # # output of primary vertex fit
+        # note: our n_tracks_sel_vertexfit / n_trackstates_sel (tracks passing the |D0|,|Z0|
+        # preselection, i.e. the actual fit input) have no equivalent in Luka's ntuples -
+        # he applies that cut inside getPrimaryTracks and never stores the intermediate count.
+        # output of primary vertex fit
         "n_primary_tracks":("Event_nPrimaryTracks", "n_primary_tracks"),
         "n_secondary_tracks":("Event_nSecondaryTracks", "n_secondary_tracks"),
         # # vertex position
