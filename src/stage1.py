@@ -88,6 +88,11 @@ class Analysis():
         #set the input/output directories:
         if self.ana_args.doData:
             self.input_dir = "/eos/experiment/fcc/ee/analyses/case-studies/aleph/LEP1_DATA/"
+            import os as _os
+            _r = _os.environ.get("ALEPH_RECLUS_DIR")
+            if _r and _os.path.isdir(_r):
+                print(f"----> INPUT OVERRIDE (ALEPH_RECLUS_DIR): {_r}")
+                self.input_dir = _r
             self.output_dir_eos = f"/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedData/{self.ana_args.year}/stage1/{self.ana_args.tag}"
             self.output_dir = "."
             
