@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WP1 baseline figures of merit for the CURRENT V0 finder (SV/V0 revisit).
+Baseline figures of merit for the CURRENT V0 finder.
 
 Reads stage1 --truthV0 output ntuples (tester or full production) and produces:
   1. efficiency vs |p|, flight distance, cos(theta)  (Ks and Lambda separately)
@@ -226,7 +226,7 @@ def main():
         axs[0].hist(np.clip(d["v0c_dxyz"][sel], bins[0], bins[-1]), bins=bins,
                     histtype="step", lw=1.5, color=COL[key], label=CLASS_LABEL[key])
     axs[0].set_xscale("log"); axs[0].set_yscale("log")
-    # branch values are cm (skeptic-verified 2026-07-22), despite mm labels in FCCAnalyses comments
+    # branch values are cm (verified), despite mm labels in FCCAnalyses comments
     axs[0].set_xlabel("candidate $d_{xyz}$ [cm]"); axs[0].set_ylabel("candidates")
     axs[0].legend(frameon=False, fontsize=8); axs[0].grid(alpha=0.25, lw=0.5)
 

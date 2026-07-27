@@ -30,19 +30,19 @@ class Analysis():
         parser.add_argument('--chunks', default=None, type=int,
                             help='Number of chunks per process/file')
         parser.add_argument('--truthV0', action='store_true',
-                            help='MC only: add mother-anchored V0 truth-matching branches (WP1 SV/V0 revisit).')
+                            help='MC only: add mother-anchored V0 truth-matching branches.')
         parser.add_argument('--nthreads', default=None, type=int,
                             help='Override the number of RDataFrame threads (for running several variants concurrently).')
         parser.add_argument('--procfile', default=None, type=str,
                             help='Process a single QQB input file (name without .root, e.g. ZM4212_40_AL) - for condor file-level splitting.')
         parser.add_argument('--newV0', action='store_true',
-                            help='Run the WP2 standalone V0 module (v0n_* branches; truth classification added when combined with --truthV0 on MC).')
+                            help='Run the standalone two-tier V0 module (v0n_* branches; truth classification added when combined with --truthV0 on MC).')
         parser.add_argument('--v0nKsPointing', default=None, type=float,
                             help='DEPRECATED/superseded by the two-tier module; using it is an error.')
         parser.add_argument('--v0nWideLamLoose', action='store_true',
-                            help='TAIL-MEASUREMENT VARIANT (2026-07-27): loose Lambda AP band widened 0.40/0.80 to measure the band tail. Not for adopted productions.')
+                            help='TAIL-MEASUREMENT VARIANT: loose Lambda AP band widened 0.40/0.80 to measure the band tail. Not for standard productions.')
         parser.add_argument('--v0nLamPointKsTiers', action='store_true',
-                            help='SIZING VARIANT (2026-07-26): tight-tier Lambda pointing aligned to the Ks p-tiers (Study-B aligned scenario). Not for adopted productions; candTight still encodes the adopted package.')
+                            help='SIZING VARIANT: tight-tier Lambda pointing aligned to the Ks p-tiers. Not for standard productions; candTight still encodes the adopted package.')
         parser.add_argument('--pvchi2', default=5.0, type=float,
                             help='chi2max for PV track compatibility in get_PrimaryTracks (default 5.0 = validated baseline; lower = fewer tracks claimed primary = more secondaries).')
         # Parse additional arguments not known to the FCCAnalyses parsers
@@ -109,7 +109,8 @@ class Analysis():
                     "1994" : {"fraction" : self.ana_args.fraction},
                 }
 
-                # WP2 data runs from the ironic nodes: write to user EOS (user-EOS output routing for ironic-node condor runs)
+                # /eos/experiment is read-only from the batch nodes: write the
+                # V0-module data output to the user EOS space instead
                 if self.ana_args.newV0:
                     self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp2_data/{self.ana_args.tag}"
 
@@ -128,7 +129,7 @@ class Analysis():
             self.input_dir = f"/eos/experiment/aleph/EDM4HEP/MC/{self.ana_args.year}/"
             # Optional local re-clustered input copy (raw files have ~3 TTree
             # clusters, capping RDataFrame at ~3-4 threads; a re-clustered copy
-            # lifts the cap — see the tester's /tmp/reclus_input analogue).
+            # lifts the cap — same mechanism as the validation tester below).
             # Opt-in via env var so production paths are untouched by default.
             import os
             _reclus = os.environ.get("ALEPH_RECLUS_DIR")
@@ -163,10 +164,11 @@ class Analysis():
                 #local tester for validation
                 if self.ana_args.valid:
 
-                    # local test tweaks (node-local /tmp output): write to node-local disk
-                    # (/eos/experiment is read-only from the ironic nodes) and use
-                    # ZM4212_40_AL, the file containing the key differing events vs
-                    # Luka's output_qqb_1 (2584, 2993, 4282, 5450, 2463, ...)
+                    # local tester: write to node-local disk (/eos/experiment is
+                    # read-only from the batch nodes) and process ZM4212_40_AL,
+                    # the file holding the events that differ against the
+                    # reference ntuple output_qqb_1 (2584, 2993, 4282, 5450,
+                    # 2463, ...)
                     self.output_dir = f"/tmp/aleph_valid_runs/{self.ana_args.tag}"
 
                     # re-clustered input copy (30 TTree clusters instead of 3): lifts the
@@ -186,8 +188,8 @@ class Analysis():
                             "QQB" : {"fraction" : self.ana_args.fraction, "output":output_name},
                         }
 
-                    # WP1 truth-matching runs: /eos/experiment is read-only from the
-                    # ironic nodes, write to the user EOS space instead (user-EOS output routing for ironic-node condor runs)
+                    # /eos/experiment is read-only from the batch nodes: write the
+                    # truth-matching output to the user EOS space instead
                     if self.ana_args.truthV0:
                         self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp1_stage1/{self.ana_args.tag}"
 
@@ -493,7 +495,7 @@ class Analysis():
         df = df.Define("v0_dy",  "FCCAnalyses::AlephSelection::get_dy_SV_jets(v0_jets, PrimaryVertexP3)")
         df = df.Define("v0_dz",  "FCCAnalyses::AlephSelection::get_dz_SV_jets(v0_jets, PrimaryVertexP3)")
 
-        ############################################# V0 truth matching (WP1, --truthV0 only) ###################################
+        ############################################# V0 truth matching (--truthV0 only) #######################################
         if self.ana_args.truthV0:
             # many-to-many track<->MC maps from the (non-empty) trackMCLink ObjectIDs
             df = df.Define("mcToTracks",  f"FCCAnalyses::AlephTruth::buildMCToTracks({coll['GenParticles']}.size(), _trackMCLink_from, _trackMCLink_to)")
@@ -509,7 +511,7 @@ class Analysis():
             df = df.Define("truev0_fd",       "trueV0s.fd")
             df = df.Define("truev0_dpv",      "trueV0s.dpv")
             df = df.Define("truev0_nmatched", "trueV0s.nmatched")
-            # true decay-point components [cm] (2026-07-26: position-resolution studies)
+            # true decay-point components [cm] (position-resolution studies)
             df = df.Define("truev0_x",        "trueV0s.vx")
             df = df.Define("truev0_y",        "trueV0s.vy")
             df = df.Define("truev0_z",        "trueV0s.vz")
@@ -537,7 +539,7 @@ class Analysis():
             df = df.Define("v0c_dxyz",        "FCCAnalyses::AlephTruth::candDxyz(V0s_event, VertexObject_looseBS)")
             df = df.Define("v0c_p",           "FCCAnalyses::AlephTruth::candP(V0s_event)")
             df = df.Define("v0c_cosPointing", "FCCAnalyses::AlephTruth::candCosPointing(V0s_event, VertexObject_looseBS)")
-            # fitted-vertex position (2026-07-26: position-resolution studies)
+            # fitted-vertex position (position-resolution studies)
             df = df.Define("v0c_vx",          "FCCAnalyses::AlephTruth::candVtxPos(V0s_event, 0)")
             df = df.Define("v0c_vy",          "FCCAnalyses::AlephTruth::candVtxPos(V0s_event, 1)")
             df = df.Define("v0c_vz",          "FCCAnalyses::AlephTruth::candVtxPos(V0s_event, 2)")
@@ -545,7 +547,7 @@ class Analysis():
             df = df.Define("truev0_found_any",     "FCCAnalyses::AlephTruth::trueV0FoundAny(trueV0s, v0truth)")
             df = df.Define("truev0_found_correct", "FCCAnalyses::AlephTruth::trueV0FoundCorrect(trueV0s, v0truth, V0s_event)")
 
-        ############################################# WP2 standalone V0 module (--newV0) ########################################
+        ############################################# Standalone two-tier V0 module (--newV0) ##################################
         if self.ana_args.newV0:
             if self.ana_args.v0nKsPointing is not None:
                 print("----> ERROR: --v0nKsPointing is superseded by the two-tier module: the loose "
@@ -571,13 +573,13 @@ class Analysis():
             df = df.Define("v0n_p",           "FCCAnalyses::AlephTruth::candP(V0sNew_event)")
             df = df.Define("v0n_cosPointing", "FCCAnalyses::AlephTruth::candCosPointing(V0sNew_event, VertexObject_looseBS)")
             df = df.Define("v0n_pointSig",    "FCCAnalyses::AlephV0New::candPointSig(V0sNew_event, VertexObject_looseBS)")
-            # two-tier module (2026-07-25): 1 = adopted tight package, 0 = loose training tier.
+            # two-tier module: 1 = adopted tight package, 0 = loose training tier.
             # Selecting v0n_tight==1 reproduces the historical tight-only output exactly.
             df = df.Define("v0n_tight",       "FCCAnalyses::AlephV0New::candTight(V0sNew_event, VertexObject_looseBS, SecondaryTracks_looseBS)")
-            # ML-input pulls (2026-07-27): cut variables in resolution units (signed; -999 undefined).
+            # ML-input pulls: cut variables in resolution units (signed; -999 undefined).
             df = df.Define("v0n_bandSig",     "FCCAnalyses::AlephV0New::candBandSig(V0sNew_event, SecondaryTracks_looseBS)")
             df = df.Define("v0n_massSig",     "FCCAnalyses::AlephV0New::candMassSig(V0sNew_event)")
-            # fitted-vertex position (2026-07-26: position-resolution studies)
+            # fitted-vertex position (position-resolution studies)
             df = df.Define("v0n_vx",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 0)")
             df = df.Define("v0n_vy",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 1)")
             df = df.Define("v0n_vz",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 2)")
