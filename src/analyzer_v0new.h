@@ -30,8 +30,8 @@
   consistently ALEPH->LCIO transformed.
   Distance units: all fit-chain positions are numerically cm (verified).
 
-  Cut values are TUNABLE arguments; the defaults below are the values obtained
-  from ROC scans on truth-matched MC.
+  Cut values are TUNABLE arguments; the defaults below are the adopted
+  package, tuned on truth-matched MC.
 */
 
 #include <algorithm>
@@ -407,8 +407,10 @@ inline RVec<float> candAlpha(const VertexingUtils::FCCAnalysesV0& v0s,
 // Lambda pointing tiers + 3sigma-capped AP band), 0 if it entered via the
 // loose training tier. Uses the same shared helpers/constants as findV0s
 // (single source), so v0n_tight encodes exactly this package and any tighter
-// selection remains re-derivable offline from the stored loose tier. Assumes
-// the adopted package (no variant override in the production). Works on data.
+// selection remains re-derivable offline from the stored loose tier. NOTE:
+// if the adopted package changes, v0n_tight is not comparable across ntuples
+// produced with different module versions. Assumes the adopted package (no
+// variant override in the production). Works on data.
 inline RVec<int> candTight(const VertexingUtils::FCCAnalysesV0& v0s,
                            const VertexingUtils::FCCAnalysesVertex& PV,
                            const RVec<edm4hep::TrackState>& secondaries) {
