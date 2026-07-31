@@ -36,8 +36,34 @@ class Analysis():
                             help='Process a single QQB input file (name without .root, e.g. ZM4212_40_AL) - for condor file-level splitting.')
         parser.add_argument('--newV0', action='store_true',
                             help='Run the WP2 standalone V0 module (v0n_* branches; truth classification added when combined with --truthV0 on MC).')
+        parser.add_argument('--newSV', action='store_true',
+                            help='PROTOTYPE (WP3): standalone SV module, V0-first (svn_* branches; requires --newV0). Also writes an unmasked control instance (svm_*).')
+        parser.add_argument('--svMaskMode', default=1, type=int,
+                            help='V0-track masking for --newSV: 0 none, 1 tight-claimed (default), 2 all claimed.')
+        parser.add_argument('--svChi2', default=10., type=float,
+                            help='--newSV: normalised vertex chi2 cut (seed + growth).')
+        parser.add_argument('--svSigL', default=0.5, type=float,
+                            help='--newSV: longitudinal vertex sigma guard [cm].')
+        parser.add_argument('--svDisLo', default=0.03, type=float,
+                            help='--newSV: displacement window low edge [cm].')
+        parser.add_argument('--svDisHi', default=3., type=float,
+                            help='--newSV: displacement window high edge [cm].')
+        parser.add_argument('--svTrkChi2', default=5., type=float,
+                            help='--newSV: per-track chi2 contribution cap (<=0 off).')
+        parser.add_argument('--svCosPoint', default=0., type=float,
+                            help='--newSV: minimum SV cosPointing.')
+        parser.add_argument('--svMaxTrk', default=8, type=int,
+                            help='--newSV: maximum tracks per SV candidate (growth cap).')
+        parser.add_argument('--svGrowShift', default=0., type=float,
+                            help='--newSV: max fitted-vertex displacement [cm] allowed per growth '
+                                 'step (position-stability guard against b->c dragging; 0 = off).')
+        parser.add_argument('--svClaimMode', default=0, type=int,
+                            help='--newSV: seed ordering / claiming. 0 best-chi2 seed first '
+                                 '(prototype), 1 densest seed first, 2 two-phase grow-all-then-claim.')
         parser.add_argument('--v0nKsPointing', default=None, type=float,
                             help='DEPRECATED/superseded by the two-tier module; using it is an error.')
+        parser.add_argument('--v0nLamPointKsTiers', action='store_true',
+                            help='SIZING VARIANT (2026-07-26): tight-tier Lambda pointing aligned to the Ks p-tiers (Study-B aligned scenario). Not for adopted productions; candTight still encodes the adopted package.')
         parser.add_argument('--pvchi2', default=5.0, type=float,
                             help='chi2max for PV track compatibility in get_PrimaryTracks (default 5.0 = validated baseline; lower = fewer tracks claimed primary = more secondaries).')
         # Parse additional arguments not known to the FCCAnalyses parsers
@@ -207,6 +233,12 @@ class Analysis():
             if "analyzer_truth.h" not in self.include_paths:
                 self.include_paths.append("analyzer_truth.h")  # truth-free helpers used by v0n branches
             self.include_paths.append("analyzer_v0new.h")
+        if self.ana_args.newSV:
+            if not self.ana_args.newV0:
+                print("----> ERROR: --newSV requires --newV0 (V0-first design: the SV finder "
+                      "masks V0-claimed tracks).")
+                exit()
+            self.include_paths.append("analyzer_svnew.h")
 
         # #submit to batch if requested:
         # self.run_batch = self.ana_args.batch # no longer supported
@@ -508,7 +540,9 @@ class Analysis():
                       "tier now covers the offline scan range, and v0n_tight/candTight assume the "
                       "adopted tight package. Using it is an error.")
                 exit()
-            df = df.Define("V0sNew_event", f"FCCAnalyses::AlephV0New::findV0s(SecondaryTracks_looseBS, VertexObject_looseBS, {BZ})")
+            v0n_finder = ("findV0sLamKsPointing" if self.ana_args.v0nLamPointKsTiers
+                          else "findV0s")
+            df = df.Define("V0sNew_event", f"FCCAnalyses::AlephV0New::{v0n_finder}(SecondaryTracks_looseBS, VertexObject_looseBS, {BZ})")
             df = df.Define("n_v0n_event",  "int(V0sNew_event.vtx.size())")
             df = df.Define("v0n_pdg",      "V0sNew_event.pdgAbs")
             df = df.Define("v0n_invM",     "V0sNew_event.invM")
@@ -560,6 +594,32 @@ class Analysis():
                 df = df.Define("v0n_trk2",        "v0ntruth.trk2")
                 df = df.Define("truev0_foundnew_any",     "FCCAnalyses::AlephTruth::trueV0FoundAny(trueV0s, v0ntruth)")
                 df = df.Define("truev0_foundnew_correct", "FCCAnalyses::AlephTruth::trueV0FoundCorrect(trueV0s, v0ntruth, V0sNew_event)")
+
+        ############################################# WP3 standalone SV module (--newSV, PROTOTYPE) ############################
+        if self.ana_args.newSV:
+            # V0-first: svn_* = SV finding after masking V0-claimed tracks (svMaskMode);
+            # svm_* = unmasked control twin from the SAME event, for the interplay study.
+            sv_args = (f"{BZ}, {self.ana_args.svChi2}, {self.ana_args.svDisLo}, "
+                       f"{self.ana_args.svDisHi}, {self.ana_args.svSigL}, {self.ana_args.svMaxTrk}, "
+                       f"{self.ana_args.svTrkChi2}, {self.ana_args.svCosPoint}, "
+                       f"{self.ana_args.svClaimMode}, {self.ana_args.svGrowShift}")
+            for pfx, mode in (("svn", self.ana_args.svMaskMode), ("svm", 0)):
+                df = df.Define(f"SVs_{pfx}", f"FCCAnalyses::AlephSVNew::findSVs(SecondaryTracks_looseBS, VertexObject_looseBS, V0sNew_event, v0n_tight, {mode}, {sv_args})")
+                df = df.Define(f"n_{pfx}_event",    f"int(SVs_{pfx}.vtx.size())")
+                df = df.Define(f"{pfx}_mass",        f"SVs_{pfx}.invM")
+                df = df.Define(f"{pfx}_chi2",        f"FCCAnalyses::AlephTruth::candChi2(SVs_{pfx})")
+                df = df.Define(f"{pfx}_dxyz",        f"FCCAnalyses::AlephTruth::candDxyz(SVs_{pfx}, VertexObject_looseBS)")
+                df = df.Define(f"{pfx}_p",           f"FCCAnalyses::AlephTruth::candP(SVs_{pfx})")
+                df = df.Define(f"{pfx}_cosPointing", f"FCCAnalyses::AlephTruth::candCosPointing(SVs_{pfx}, VertexObject_looseBS)")
+                df = df.Define(f"{pfx}_pointSig",    f"FCCAnalyses::AlephV0New::candPointSig(SVs_{pfx}, VertexObject_looseBS)")
+                df = df.Define(f"{pfx}_ntracks",     f"FCCAnalyses::AlephSVNew::candNtracks(SVs_{pfx})")
+                df = df.Define(f"{pfx}_sigL",        f"FCCAnalyses::AlephSVNew::candSigL(SVs_{pfx})")
+                df = df.Define(f"{pfx}_trk_sv",      f"FCCAnalyses::AlephSVNew::candTrkSV(SVs_{pfx})")
+                df = df.Define(f"{pfx}_trk_idx",     f"FCCAnalyses::AlephSVNew::candTrkIdx(SVs_{pfx})")
+                # displacement VECTOR wrt PV (dxyz is only the magnitude) -> offline
+                # position matching against the true SV positions
+                for ic, cc in enumerate("xyz"):
+                    df = df.Define(f"{pfx}_d{cc}", f"FCCAnalyses::AlephSVNew::candDcomp(SVs_{pfx}, VertexObject_looseBS, {ic})")
 
         ############################################# Particle Flow Level Variables #######################################################
         df = df.Define("pfcand_isMu",     "AlephSelection::get_isType(jetConstitutentsTypes,2)")
@@ -766,6 +826,18 @@ class Analysis():
                     "v0n_trk1", "v0n_trk2",
                     "truev0_foundnew_any", "truev0_foundnew_correct",
                 ]
+        if self.ana_args.newSV:
+            for pfx in ("svn", "svm"):
+                truth_branches += [
+                    f"n_{pfx}_event", f"{pfx}_mass", f"{pfx}_chi2", f"{pfx}_dxyz",
+                    f"{pfx}_p", f"{pfx}_cosPointing", f"{pfx}_pointSig",
+                    f"{pfx}_ntracks", f"{pfx}_sigL", f"{pfx}_trk_sv", f"{pfx}_trk_idx",
+                    f"{pfx}_dx", f"{pfx}_dy", f"{pfx}_dz",
+                ]
+            if self.ana_args.truthV0:
+                # secondary->original track index map: lets offline analyses walk
+                # svn_trk_idx / v0n_trk1/2 -> original track -> trackMCLink truth
+                truth_branches += ["sec2origIdx"]
 
         return truth_branches + [
             #DEBUG

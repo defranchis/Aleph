@@ -148,7 +148,8 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
     double ap_band_ks = AP_BAND_KS,                    // Ks exact-locus AP band |ell-1| floor (<=0 disables the band in BOTH tiers)
     double ap_lam_lo = AP_LAM_LO, double ap_lam_hi = AP_LAM_HI, // tight Lambda band thr(p): lo below 8 GeV, linear to hi at 20 GeV (<=0 off)
     double chi2_cut = CHI2_CUT,                        // vertex chi2 (ndf=1, common)
-    double trk_chi2_cut = -1.) {                       // per-track chi2 (<=0 off, common)
+    double trk_chi2_cut = -1.,                         // per-track chi2 (<=0 off, common)
+    bool lam_point_ks_tiers = false) {                 // sizing variant (user-approved 2026-07-26): tight Lambda pointing uses the Ks p-tiers instead of cos_point_lam; candTight still encodes the ADOPTED package
 
   VertexingUtils::FCCAnalysesV0 result;
   const int nTr = np_tracks.size();
@@ -226,7 +227,10 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
       if (okKs && ap_band_ks > 0)
         okKs = std::abs(ksBandEll(alpha, qt, pmag) - 1.) <
                ksBandThr(pmag, ap_band_ks, TIGHT_NSIG_KS_LOWP, TIGHT_NSIG_KS_HIGHP);
-      bool okLam = inWinLam && cp > cos_point_lam && qt > qt_min_lam;
+      double cos_lam_thr = lam_point_ks_tiers
+          ? ksPointThr(pmag, cos_ks_lowp, cos_ks_midp, cos_point_ks)
+          : cos_point_lam;
+      bool okLam = inWinLam && cp > cos_lam_thr && qt > qt_min_lam;
       if (okLam && ap_lam_lo > 0)
         okLam = std::abs(lamBandEll(alpha, qt, pmag) - 1.) <
                 lamBandThr(pmag, ap_lam_lo, ap_lam_hi);
@@ -274,6 +278,28 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
     result.invM.push_back(c.m);
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Sizing-variant entry point (user-approved 2026-07-26): identical to the
+// adopted findV0s defaults except the tight-tier Lambda pointing is aligned to
+// the Ks p-tiers (0.999 / 0.9995 / 0.9999 for p<2 / 2-4 / >=4 GeV) — the
+// Study-B "aligned" scenario. Defaults are spelled here in C++ next to their
+// constants (single source, no Python-side hand-sync). NOT for adopted
+// productions. NB (skeptic-verified 2026-07-27): the v0n_tight branch in its
+// output STILL encodes the ADOPTED package (candTight re-derivation) — NOT
+// variant-tier membership. Variant-tight must be re-derived offline from
+// kinematics; trusting v0n_tight would silently drop the tier migrants.
+// ---------------------------------------------------------------------------
+inline VertexingUtils::FCCAnalysesV0 findV0sLamKsPointing(
+    const RVec<edm4hep::TrackState>& np_tracks,
+    const VertexingUtils::FCCAnalysesVertex& PV,
+    double solenoidBz = 1.5) {
+  return findV0s(np_tracks, PV, solenoidBz, TIGHT_COS_KS_HIGHP, KS_M_LO, KS_M_HI,
+                 LAM_M_LO, LAM_M_HI, DIS_LO, DIS_HI, TIGHT_COS_LAM,
+                 TIGHT_QT_MIN_LAM, TIGHT_COS_KS_LOWP, TIGHT_COS_KS_MIDP,
+                 AP_BAND_KS, AP_LAM_LO, AP_LAM_HI, CHI2_CUT, -1.,
+                 /*lam_point_ks_tiers=*/true);
 }
 
 // ---------------------------------------------------------------------------
