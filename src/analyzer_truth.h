@@ -2,7 +2,7 @@
 #define ALEPHTRUTH_H
 
 /*
-  Truth-matching utilities for the SV/V0 revisit (WP1 baseline).
+  Truth-matching utilities for V0 and secondary-vertex studies.
 
   The podio parent/daughter links in the ALEPH EDM4HEP files are present but
   empty, so the decay graph is recovered GEOMETRICALLY: Geant daughters are
@@ -87,6 +87,9 @@ struct TrueV0s {
   RVec<float> pz;
   RVec<float> fd;         // flight distance |endpoint - vertex| of mother [cm]
   RVec<float> dpv;        // decay point distance from gen PV (MCParticles[0].vertex) [cm]
+  RVec<float> vx;         // decay point components [cm] (position-resolution studies)
+  RVec<float> vy;
+  RVec<float> vz;
   RVec<int>   nmatched;   // # daughters with >=1 linked track (0/1/2)
 };
 
@@ -182,6 +185,9 @@ inline TrueV0s findTrueV0s(const RVec<edm4hep::MCParticleData>& mc,
     out.pz.push_back(pv3.Z());
     out.fd.push_back((ep - prod).Mag());
     out.dpv.push_back((ep - genPV).Mag());
+    out.vx.push_back(ep.X());
+    out.vy.push_back(ep.Y());
+    out.vz.push_back(ep.Z());
     out.nmatched.push_back(nm);
   }
   return out;
@@ -323,7 +329,7 @@ inline RVec<int> daughtersInSecondaries(const TrueV0s& tv,
   return out;
 }
 
-// For V0 collections whose vertices carry a filled reco_ind (e.g. the WP2
+// For V0 collections whose vertices carry a filled reco_ind (e.g. the
 // AlephV0New module): build the pair association directly, no replica needed.
 inline V0Pairs pairsFromRecoInd(const VertexingUtils::FCCAnalysesV0& v0s) {
   V0Pairs out;
@@ -500,6 +506,17 @@ inline RVec<float> candDxyz(const VertexingUtils::FCCAnalysesV0& v0s,
     TVector3 x(v.vertex.position[0], v.vertex.position[1], v.vertex.position[2]);
     out.push_back((x - pv).Mag());
   }
+  return out;
+}
+
+// Fitted-vertex position components, one accessor per axis (position-
+// resolution studies; works for old and new finder collections alike).
+// Units: both collections store positions numerically in cm (verified — the
+// old chain's mixed-unit defect is in its second fit's momenta/covariance,
+// not the vertex position).
+inline RVec<float> candVtxPos(const VertexingUtils::FCCAnalysesV0& v0s, int axis) {
+  RVec<float> out;
+  for (const auto& v : v0s.vtx) out.push_back(v.vertex.position[axis]);
   return out;
 }
 

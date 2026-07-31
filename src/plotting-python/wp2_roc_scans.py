@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-WP2 cut-design ROC scans on the WP1 truth-matched V0 ntuples.
+Cut-design ROC scans on the truth-matched V0 ntuples.
 
-Evaluates the CUT-type design levers of the SV/V0 revisit handoff on the
-existing candidate set (structural levers - single-hypothesis assignment,
-global claiming, refit - need the new module and are NOT evaluated here):
+Evaluates the CUT-type design levers on the existing candidate set
+(structural levers - single-hypothesis assignment, global claiming, refit -
+need the new module and are NOT evaluated here):
 
   L1  displacement upper bound (junk suppression) + lower bound scan
   L5  Armenteros-Podolanski selection (elliptic Ks band, qt/alpha cuts)
@@ -15,7 +15,7 @@ For each scan: signal = candidates truth-matched to the hypothesis
 (class 1 for Ks-hyp, class 2 for Lambda-hyp), background = everything else
 under the same hypothesis. Reports ROC curves (signal efficiency vs background
 rejection) and a proposed working point (max Youden J = eff - (1-rej)) -
-PROPOSALS ONLY, adoption requires sign-off.
+proposed working points only, not adopted defaults.
 
 Usage: python3 wp2_roc_scans.py --input '<glob>' --outdir DIR [--label TEXT]
 """
@@ -82,7 +82,7 @@ def main():
     ap.add_argument("--outdir", default="wp2_roc")
     ap.add_argument("--label", default="")
     ap.add_argument("--prefix", default="v0c", choices=["v0c", "v0n"],
-                    help="candidate branch prefix: v0c = reference finder, v0n = WP2 module")
+                    help="candidate branch prefix: v0c = reference finder, v0n = standalone module")
     args = ap.parse_args()
 
     files = sorted(glob.glob(args.input))
@@ -104,7 +104,7 @@ def main():
         sig, bkg = d["v0c_dxyz"][h & (d["v0c_class"] == cls)], d["v0c_dxyz"][h & (d["v0c_class"] != cls)]
         S[f"L1_upper_{name}"] = roc(axs[0], sig, bkg, thr_up, True, f"{name} (dxyz<thr)", col)
         S[f"L1_lower_{name}"] = roc(axs[1], sig, bkg, thr_lo, False, f"{name} (dxyz>thr)", col)
-    # v0c_dxyz is in cm (skeptic-verified), despite mm labels in FCCAnalyses comments
+    # v0c_dxyz is in cm (verified), despite mm labels in FCCAnalyses comments
     for ax, t in zip(axs, ["upper bound scan [cm]", "lower bound scan [cm]"]):
         ax.set_xlabel("signal efficiency"); ax.set_ylabel("background rejection")
         ax.set_title(f"L1 displacement {t}", fontsize=10)
@@ -142,7 +142,7 @@ def main():
         S[f"L6_cosPointing_{name}"] = roc(ax, sig, bkg, thr_cp[::-1], False, name, col)
     ax.set_xlabel("signal efficiency"); ax.set_ylabel("background rejection")
     ax.grid(alpha=0.25, lw=0.5); ax.legend(frameon=False, fontsize=8)
-    fig.suptitle(f"L6: cosPointing scan (adopted tiers 0.999/0.9995/0.9999 (Ks), 0.99995 (Λ)){lab}")
+    fig.suptitle(f"L6: cosPointing scan (adopted tiers 0.999/0.9995/0.9999 (Ks), 0.99995/0.9999 C\u2032 (Λ)){lab}")
     fig.tight_layout(); fig.savefig(f"{args.outdir}/roc_L6_cospointing.png", dpi=140); plt.close(fig)
 
     # ---- L7: vertex chi2 (v0n only - well-conditioned single fit) ----
