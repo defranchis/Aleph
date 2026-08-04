@@ -398,6 +398,14 @@ class Analysis():
         df = df.Define("Vertex_refit_y", "Vertex_refit_looseBS.position.y")
         df = df.Define("Vertex_refit_z", "Vertex_refit_looseBS.position.z")
 
+        # PV fit covariance (lower-triangular xx, yx, yy, zx, zy, zz)
+        df = df.Define("Vertex_refit_cov_xx", "Vertex_refit_looseBS.covMatrix.values[0]")
+        df = df.Define("Vertex_refit_cov_yx", "Vertex_refit_looseBS.covMatrix.values[1]")
+        df = df.Define("Vertex_refit_cov_yy", "Vertex_refit_looseBS.covMatrix.values[2]")
+        df = df.Define("Vertex_refit_cov_zx", "Vertex_refit_looseBS.covMatrix.values[3]")
+        df = df.Define("Vertex_refit_cov_zy", "Vertex_refit_looseBS.covMatrix.values[4]")
+        df = df.Define("Vertex_refit_cov_zz", "Vertex_refit_looseBS.covMatrix.values[5]")
+
         df = df.Define("n_primary_tracks", "ReconstructedParticle2Track::getTK_n(RecoedPrimaryTracks_looseBS)")
         df = df.Define("n_secondary_tracks", "ReconstructedParticle2Track::getTK_n(SecondaryTracks_looseBS)")
 
@@ -941,6 +949,12 @@ class Analysis():
             "Vertex_refit_x",
             "Vertex_refit_y",
             "Vertex_refit_z",
+            "Vertex_refit_cov_xx",
+            "Vertex_refit_cov_yx",
+            "Vertex_refit_cov_yy",
+            "Vertex_refit_cov_zx",
+            "Vertex_refit_cov_zy",
+            "Vertex_refit_cov_zz",
 
             # gen level vertex & resolutions
             "gen_vertex_x",
