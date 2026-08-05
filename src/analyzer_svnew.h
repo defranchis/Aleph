@@ -65,7 +65,10 @@ inline double sigmaAlong(const Cov& c, const TVector3& u) {
 //   (default), 2 = mask all V0-claimed tracks (incl. loose tier).
 // Returns FCCAnalysesV0 (struct reused: pdgAbs = 0, invM = N-pion mass) so the
 // existing candChi2/candDxyz/candP/candCosPointing/candPointSig getters apply.
-// reco_ind indexes the SAME secondary collection as v0n_trk1/trk2.
+// reco_ind indexes the SECONDARY track collection (np_tracks). NOTE this is
+// NOT the index space of v0n_trk1/trk2, which are ORIGINAL Tracks indices
+// (classifyV0s maps them through sec2orig, analyzer_truth.h) — walk reco_ind
+// through sec2origIdx before comparing against them.
 // ---------------------------------------------------------------------------
 inline VertexingUtils::FCCAnalysesV0 findSVs(
     const RVec<edm4hep::TrackState>& np_tracks,
@@ -311,7 +314,8 @@ inline RVec<float> candSigL(const VertexingUtils::FCCAnalysesV0& svs) {
 
 // flat candidate<->track association (variable-length track lists):
 // candTrkSV[k] = candidate index of the k-th association, candTrkIdx[k] = its
-// track index in the secondary collection (same index space as v0n_trk1/2).
+// track index in the SECONDARY collection (NOT the v0n_trk1/2 space — those
+// are ORIGINAL Tracks indices; map through sec2origIdx to compare).
 inline RVec<int> candTrkSV(const VertexingUtils::FCCAnalysesV0& svs) {
   RVec<int> out;
   for (size_t i = 0; i < svs.vtx.size(); ++i)

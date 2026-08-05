@@ -573,6 +573,68 @@ inline RVec<float> candQt(const VertexingUtils::FCCAnalysesV0& v0s) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// vertex-fit covariance exposure + per-daughter joins
+// ---------------------------------------------------------------------------
+
+// Vertex-fit covariance component ic of every candidate (packed lower
+// triangle: 0=xx 1=yx 2=yy 3=zx 4=zy 5=zz, cm^2 — same packing as the
+// Vertex_refit_cov_* PV branches). Works for the V0 module output AND the
+// new-SV module output (both are FCCAnalysesV0).
+inline RVec<float> candCovComp(const VertexingUtils::FCCAnalysesV0& v0s,
+                               int ic) {
+  RVec<float> out;
+  for (const auto& v : v0s.vtx) out.push_back(v.vertex.covMatrix[ic]);
+  return out;
+}
+
+// Daughter k (0/1) of every candidate as an ORIGINAL Tracks index: reco_ind
+// (secondary space) walked through sec2origIdx. -1 when unavailable. This is
+// the truth-free join — unlike v0n_trk1/2 it needs no --truthV0.
+inline RVec<int> candDaughterOrigIdx(const VertexingUtils::FCCAnalysesV0& v0s,
+                                     const RVec<int>& sec2orig, int k) {
+  RVec<int> out;
+  for (const auto& v : v0s.vtx) {
+    int idx = -1;
+    if (k < (int)v.reco_ind.size()) {
+      int s = v.reco_ind[k];
+      if (s >= 0 && s < (int)sec2orig.size()) idx = sec2orig[s];
+    }
+    out.push_back(idx);
+  }
+  return out;
+}
+
+// Per-track measurement lookup: for each requested ORIGINAL track index,
+// return the first measurement whose track association matches. Sentinel -1
+// when there is no measurement, the index is -1, or the GATE value of that
+// measurement is exactly 0 — a dQdx.value==0 entry means "no measurement",
+// and passing it through produces an artificial stripe at 0 in every dE/dx
+// spectrum — hence the sentinel, never a fake 0. Pass the
+// dQdx.value array as `gate` for BOTH the value and the error lookup, so an
+// unmeasured track gets -1 in both branches consistently.
+inline RVec<float> trackQuantityByIndex(const RVec<int>& want,
+                                        const RVec<float>& values,
+                                        const RVec<float>& gate,
+                                        const RVec<int>& meas_track_idx) {
+  RVec<float> out;
+  const size_t nm = std::min({values.size(), gate.size(),
+                              meas_track_idx.size()});
+  for (int w : want) {
+    float val = -1.f;
+    if (w >= 0) {
+      for (size_t j = 0; j < nm; ++j) {
+        if (meas_track_idx[j] == w) {
+          if (gate[j] != 0.f) val = values[j];
+          break;
+        }
+      }
+    }
+    out.push_back(val);
+  }
+  return out;
+}
+
 } // namespace AlephV0New
 } // namespace FCCAnalyses
 

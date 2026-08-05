@@ -1111,6 +1111,23 @@ get_SV_event_ALEPH(
 
 // utils for SV properties:
 
+// SV vertex-fit covariance component ic (packed lower triangle:
+// 0=xx 1=yx 2=yy 3=zx 4=zy 5=zz — same order as the Vertex_refit_cov_*
+// PV branches), nested per jet like the other sv_* getters.
+inline ROOT::VecOps::RVec<ROOT::VecOps::RVec<float>>
+svCovComp(
+    const ROOT::VecOps::RVec<ROOT::VecOps::RVec<VertexingUtils::FCCAnalysesVertex>>& sv_jets,
+    int ic)
+{
+    ROOT::VecOps::RVec<ROOT::VecOps::RVec<float>> result;
+    for (const auto& jet : sv_jets) {
+        ROOT::VecOps::RVec<float> row;
+        for (const auto& v : jet) row.push_back(v.vertex.covMatrix[ic]);
+        result.push_back(row);
+    }
+    return result;
+}
+
 // SV displacement from PV in lab frame x/y/z [mm], per jet
 ROOT::VecOps::RVec<ROOT::VecOps::RVec<double>>
 get_dx_SV_jets(

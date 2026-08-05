@@ -39,6 +39,12 @@ class Analysis():
                             help='Run the standalone two-tier V0 module (v0n_* branches; truth classification added when combined with --truthV0 on MC).')
         parser.add_argument('--newSV', action='store_true',
                             help='PROTOTYPE (WP3): standalone SV module, V0-first (svn_* branches; requires --newV0). Also writes an unmasked control instance (svm_*).')
+        parser.add_argument('--newPV', action='store_true',
+                            help='PROTOTYPE: standalone PV fitter (analyzer_pvnew.h) replacing '
+                                 'get_PrimaryTracks + VertexFitter_Tk. Same pvchi2 semantics with the '
+                                 'clean pruning loop; adds pv_converged/pv_split_converged/pv_trivial flag branches '
+                                 'and the converged=false consumer policies (finder guards, old-SV skip, '
+                                 'jet-level beamspot fallback).')
         parser.add_argument('--svMaskMode', default=1, type=int,
                             help='V0-track masking for --newSV: 0 none, 1 tight-claimed (default), 2 all claimed.')
         parser.add_argument('--svChi2', default=10., type=float,
@@ -240,17 +246,18 @@ class Analysis():
         if self.ana_args.nthreads is not None:
             self.n_threads = self.ana_args.nthreads
 
-        self.include_paths = ["analyzer.h"]
+        # analyzer_truth.h is loaded unconditionally: its truth-FREE helpers
+        # (selectedBaselineOriginalIndices / secondaryToOriginalTrack) back the
+        # always-written prim2origIdx / sec2origIdx index-map branches, on data
+        # too. The truth-classification branches remain gated by --truthV0.
+        self.include_paths = ["analyzer.h", "analyzer_truth.h"]
         if self.ana_args.truthV0:
             if self.ana_args.doData:
                 print("----> ERROR: --truthV0 requires MC input.")
                 exit()
-            self.include_paths.append("analyzer_truth.h")
         if self.ana_args.newV0:
             # runs standalone on data (kinematic branches only); with --truthV0 on MC
             # the truth-classification branches are added as well
-            if "analyzer_truth.h" not in self.include_paths:
-                self.include_paths.append("analyzer_truth.h")  # truth-free helpers used by v0n branches
             self.include_paths.append("analyzer_v0new.h")
         if self.ana_args.newSV:
             if not self.ana_args.newV0:
@@ -258,6 +265,8 @@ class Analysis():
                       "masks V0-claimed tracks).")
                 exit()
             self.include_paths.append("analyzer_svnew.h")
+        if self.ana_args.newPV:
+            self.include_paths.append("analyzer_pvnew.h")
 
         # #submit to batch if requested:
         # self.run_batch = self.ana_args.batch # no longer supported
@@ -380,19 +389,62 @@ class Analysis():
             df = df.Define("Beamspot_y", "0.0")
             df = df.Define("Beamspot_z", "0.0")
 
-        # Guard: with fewer than 2 IP-preselected tracks there is no meaningful primary vertex,
-        # so return NO primary tracks (the PV fit then falls back to the dummy beamspot vertex).
-        # FCCAnalyses' get_PrimaryTracks instead returns `seltracks` unchanged, i.e. the single
-        # track - that is what the reference wrapper (getPrimaryTracks in analyzer_pvtools.cxx,
-        # `if(tracksToUse.size() < 2){ return primaryTracks; }`) guards against. Without this we
-        # get nPrim=1 where the reference has nPrim=0 (~1400 events / 1.05M in the full sweep).
-        # note: the {{}} is an escaped literal {} for str.format - it is the empty RVec, not a placeholder
-        df = df.Define("RecoedPrimaryTracks_looseBS", "trackstates_selected_for_vertexfit_flipped.size() < 2 ? ROOT::VecOps::RVec<edm4hep::TrackState>{{}} : VertexFitterSimple::get_PrimaryTracks(trackstates_selected_for_vertexfit_flipped, true, {},{},{}, Beamspot_x, Beamspot_y, Beamspot_z, {})".format(res_x_loose/10., res_y_loose/10., res_z_loose*1E03, chi2max)) # 10um as unit (x,y), 1cm as unit (z)
-        df = df.Define("VertexObject_looseBS", "VertexFitterSimple::VertexFitter_Tk(1, RecoedPrimaryTracks_looseBS, true, {},{},{}, Beamspot_x, Beamspot_y, Beamspot_z)".format(res_x_loose/10., res_y_loose/10., res_z_loose*1E03)) # 10um as unit (x,y), 1cm as unit (z)
-        df = df.Define("Vertex_refit_looseBS", "VertexingUtils::get_VertexData(VertexObject_looseBS)")
-        df = df.Define("Vertex_refit_tlv", "TLorentzVector(Vertex_refit_looseBS.position.x, Vertex_refit_looseBS.position.y, Vertex_refit_looseBS.position.z, 0.)")
-        # for retrieving secondary tracks, use the full list of selected tracks 
+        if self.ana_args.newPV:
+            # Standalone PV fitter (analyzer_pvnew.h): one fitter, one unit
+            # convention (cm), explicit converged flags — the selection fit and
+            # the final fit share the SAME beam-spot constraint by construction.
+            # Beamspot_x/y/z are in 10um units (get_beamspot convention) -> cm.
+            bs_cm = ("FCCAnalyses::AlephPVNew::BeamSpot{{Beamspot_x*1e-3, Beamspot_y*1e-3, "
+                     "Beamspot_z*1e-3, {}, {}, {}}}").format(res_x_loose * 1e-4, res_y_loose * 1e-4, res_z_loose)
+            df = df.Define("PVSelNew", "FCCAnalyses::AlephPVNew::select_primary_tracks(trackstates_selected_for_vertexfit_flipped, {}, {})".format(bs_cm, chi2max))
+            # TWO flags: the known 33.9cm-event corruption came from the SELECTION
+            # fit, so a flag on the position fit alone cannot cover it. int-typed.
+            df = df.Define("pv_converged",       "int(PVSelNew.fit.converged)")
+            df = df.Define("pv_split_converged", "int(PVSelNew.split_converged)")
+            # fewer than 2 IP-preselected tracks entered the pruning: the fit
+            # "converges" at/near the beam spot with no track information, so
+            # both flags above can still read 1. int-typed.
+            df = df.Define("pv_trivial",         "int(PVSelNew.trivial)")
+            # split from the pruning when it converged, else the
+            # beamspot-as-fixed-PV fallback (never the unpruned return)
+            df = df.Define("RecoedPrimaryTracks_looseBS", "FCCAnalyses::AlephPVNew::primaryTracksFromSel(trackstates_selected_for_vertexfit_flipped, PVSelNew, Beamspot_x*1e-3, Beamspot_y*1e-3, Beamspot_z*1e-3, {})".format(chi2max))
+            # position always written (the garbage IS the diagnostic),
+            # covariance zeroed on non-convergence
+            df = df.Define("VertexObject_looseBS", "FCCAnalyses::AlephPVNew::toFCCVertex(PVSelNew)")
+            df = df.Define("Vertex_refit_looseBS", "VertexObject_looseBS.vertex")
+            # jet-level IP variables fail open with huge finite values under
+            # a garbage PV -> substitute the beam-spot position on the flag
+            df = df.Define("Vertex_refit_tlv", "pv_converged ? TLorentzVector(Vertex_refit_looseBS.position.x, Vertex_refit_looseBS.position.y, Vertex_refit_looseBS.position.z, 0.) : TLorentzVector(Beamspot_x*1e-3, Beamspot_y*1e-3, Beamspot_z*1e-3, 0.)")
+        else:
+            # Guard: with fewer than 2 IP-preselected tracks there is no meaningful primary vertex,
+            # so return NO primary tracks (the PV fit then falls back to the dummy beamspot vertex).
+            # FCCAnalyses' get_PrimaryTracks instead returns `seltracks` unchanged, i.e. the single
+            # track - that is what the reference wrapper (getPrimaryTracks in analyzer_pvtools.cxx,
+            # `if(tracksToUse.size() < 2){ return primaryTracks; }`) guards against. Without this we
+            # get nPrim=1 where the reference has nPrim=0 (~1400 events / 1.05M in the full sweep).
+            # note: the {{}} is an escaped literal {} for str.format - it is the empty RVec, not a placeholder
+            df = df.Define("RecoedPrimaryTracks_looseBS", "trackstates_selected_for_vertexfit_flipped.size() < 2 ? ROOT::VecOps::RVec<edm4hep::TrackState>{{}} : VertexFitterSimple::get_PrimaryTracks(trackstates_selected_for_vertexfit_flipped, true, {},{},{}, Beamspot_x, Beamspot_y, Beamspot_z, {})".format(res_x_loose/10., res_y_loose/10., res_z_loose*1E03, chi2max)) # 10um as unit (x,y), 1cm as unit (z)
+            df = df.Define("VertexObject_looseBS", "VertexFitterSimple::VertexFitter_Tk(1, RecoedPrimaryTracks_looseBS, true, {},{},{}, Beamspot_x, Beamspot_y, Beamspot_z)".format(res_x_loose/10., res_y_loose/10., res_z_loose*1E03)) # 10um as unit (x,y), 1cm as unit (z)
+            df = df.Define("Vertex_refit_looseBS", "VertexingUtils::get_VertexData(VertexObject_looseBS)")
+            df = df.Define("Vertex_refit_tlv", "TLorentzVector(Vertex_refit_looseBS.position.x, Vertex_refit_looseBS.position.y, Vertex_refit_looseBS.position.z, 0.)")
+        # for retrieving secondary tracks, use the full list of selected tracks
         df = df.Define("SecondaryTracks_looseBS", "VertexFitterSimple::get_NonPrimaryTracks(trackstates_selected_baseline_flipped, RecoedPrimaryTracks_looseBS)")
+
+        # original-Tracks index maps for the primary/secondary splits (truth-free:
+        # pure track-state matching, so they are written for DATA too). prim2origIdx
+        # gives the original-track indices of the fitted primary set, making the
+        # set's composition countable against truth; sec2origIdx is the join that
+        # v0n reco_ind / svn_trk_idx need to reach the original track collection.
+        df = df.Define("selBaselineOrigIdx", "FCCAnalyses::AlephTruth::selectedBaselineOriginalIndices(Tracks, _Tracks_trackStates, trackstates_selected_baseline)")
+        df = df.Define("sec2origIdx",        "FCCAnalyses::AlephTruth::secondaryToOriginalTrack(SecondaryTracks_looseBS, trackstates_selected_baseline_flipped, selBaselineOrigIdx)")
+        df = df.Define("prim2origIdx",       "FCCAnalyses::AlephTruth::secondaryToOriginalTrack(RecoedPrimaryTracks_looseBS, trackstates_selected_baseline_flipped, selBaselineOrigIdx)")
+
+        # track<->pfcand join: the RecoParticles->Tracks relation, flattened
+        # (recopart_tracks_index[recopart_tracks_begin[i]] = track index of
+        # reco particle i when it has a track; begin==end for neutrals)
+        df = df.Define("recopart_tracks_index", "_RecoParticles_tracks.index")
+        df = df.Define("recopart_tracks_begin", "RecoParticles.tracks_begin")
+        df = df.Define("recopart_tracks_end",   "RecoParticles.tracks_end")
 
         df = df.Define("Vertex_refit_x", "Vertex_refit_looseBS.position.x")
         df = df.Define("Vertex_refit_y", "Vertex_refit_looseBS.position.y")
@@ -405,6 +457,12 @@ class Analysis():
         df = df.Define("Vertex_refit_cov_zx", "Vertex_refit_looseBS.covMatrix.values[3]")
         df = df.Define("Vertex_refit_cov_zy", "Vertex_refit_looseBS.covMatrix.values[4]")
         df = df.Define("Vertex_refit_cov_zz", "Vertex_refit_looseBS.covMatrix.values[5]")
+
+        # PV fit quality (chi2/ndf as the fitter stores it): a silently
+        # non-converged Newton fit sits orders of magnitude above any genuine
+        # vertex, so this branch separates the failure mode at zero cost —
+        # the value was computed and discarded before.
+        df = df.Define("Vertex_refit_chi2", "Vertex_refit_looseBS.chi2")
 
         df = df.Define("n_primary_tracks", "ReconstructedParticle2Track::getTK_n(RecoedPrimaryTracks_looseBS)")
         df = df.Define("n_secondary_tracks", "ReconstructedParticle2Track::getTK_n(SecondaryTracks_looseBS)")
@@ -464,13 +522,20 @@ class Analysis():
 
         ############################################# Secondary Vertices #######################################################
         # first we find the secondary vertices per event ...        
-        df = df.Define("SVs_looseBS", "FCCAnalyses::AlephSelection::get_SV_event_ALEPH("
+        old_sv_expr = ("FCCAnalyses::AlephSelection::get_SV_event_ALEPH("
             "SecondaryTracks_looseBS, "               # non-primary tracks
             "trackstates_selected_baseline_flipped, " # all tracks
             "VertexObject_looseBS, "                  # primary vertex
             "0.8, "                                   # dR prefilter cut
             "false)"                                  # exclusive V0 rejection (skip+break), matching FCCAnalyses@3a4de97 isV0 - the code that produced ntuples-withks
         )
+        if self.ana_args.newPV:
+            # the old LCFIPlus finder FAILS OPEN under a garbage PV (its only
+            # PV-dependent cut is an angle<0 rejection, so it emits plausible
+            # 34cm-scale SVs) -> hard skip on the flag
+            old_sv_expr = ("pv_converged ? " + old_sv_expr +
+                           " : ROOT::VecOps::RVec<FCCAnalyses::VertexingUtils::FCCAnalysesVertex>{}")
+        df = df.Define("SVs_looseBS", old_sv_expr)
 
         #.. then we assign them to the closest jet based on dR (also tracks to be moved between jets, in contrast to using get_SV_jet ! )
         df = df.Define("sv_jets", "FCCAnalyses::AlephSelection::assign_SV_to_jets(SVs_looseBS, jets)")
@@ -503,6 +568,11 @@ class Analysis():
         df = df.Define("sv_dx", "FCCAnalyses::AlephSelection::get_dx_SV_jets(sv_jets, PrimaryVertexP3)")
         df = df.Define("sv_dy", "FCCAnalyses::AlephSelection::get_dy_SV_jets(sv_jets, PrimaryVertexP3)")
         df = df.Define("sv_dz", "FCCAnalyses::AlephSelection::get_dz_SV_jets(sv_jets, PrimaryVertexP3)")
+        # legacy-SV vertex-fit covariance (nested per jet like the other sv_*
+        # branches; packed lower triangle, same component order as the
+        # Vertex_refit_cov_* branches)
+        for ic, cc in enumerate(("xx", "yx", "yy", "zx", "zy", "zz")):
+            df = df.Define(f"sv_cov_{cc}", f"FCCAnalyses::AlephSelection::svCovComp(sv_jets, {ic})")
 
         ############################################# V0 Reconstruction #######################################################
         df = df.Define("V0s_event",
@@ -558,9 +628,8 @@ class Analysis():
             df = df.Define("truev0_x",        "trueV0s.vx")
             df = df.Define("truev0_y",        "trueV0s.vy")
             df = df.Define("truev0_z",        "trueV0s.vz")
-            # candidate track indices back to the original Tracks collection
-            df = df.Define("selBaselineOrigIdx", "FCCAnalyses::AlephTruth::selectedBaselineOriginalIndices(Tracks, _Tracks_trackStates, trackstates_selected_baseline)")
-            df = df.Define("sec2origIdx",        "FCCAnalyses::AlephTruth::secondaryToOriginalTrack(SecondaryTracks_looseBS, trackstates_selected_baseline_flipped, selBaselineOrigIdx)")
+            # (selBaselineOrigIdx / sec2origIdx are defined unconditionally in the
+            # PV block above — truth-free track-state matching, available on data)
             # daughters surviving into the secondary-track set (0-2): separates PV-claim losses from finder losses
             df = df.Define("truev0_nsec",        "FCCAnalyses::AlephTruth::daughtersInSecondaries(trueV0s, mcToTracks, sec2origIdx)")
             # recover which track pair each candidate came from (compiled get_V0s leaves reco_ind empty);
@@ -604,7 +673,14 @@ class Analysis():
             v0n_finder = ("findV0sLamKsPointing" if self.ana_args.v0nLamPointKsTiers
                           else "findV0sWideLamLoose" if self.ana_args.v0nWideLamLoose
                           else "findV0s")
-            df = df.Define("V0sNew_event", f"FCCAnalyses::AlephV0New::{v0n_finder}(SecondaryTracks_looseBS, VertexObject_looseBS, {BZ})")
+            v0n_expr = f"FCCAnalyses::AlephV0New::{v0n_finder}(SecondaryTracks_looseBS, VertexObject_looseBS, {BZ})"
+            if self.ana_args.newPV:
+                # explicit empty-return entry guard on the flag (the window
+                # cuts would empty it anyway, a silent efficiency loss; the
+                # guard makes the failure explicit and empties pointSig too)
+                v0n_expr = ("pv_converged ? " + v0n_expr +
+                            " : FCCAnalyses::VertexingUtils::FCCAnalysesV0{}")
+            df = df.Define("V0sNew_event", v0n_expr)
             df = df.Define("n_v0n_event",  "int(V0sNew_event.vtx.size())")
             df = df.Define("v0n_pdg",      "V0sNew_event.pdgAbs")
             df = df.Define("v0n_invM",     "V0sNew_event.invM")
@@ -622,6 +698,22 @@ class Analysis():
             # ML-input pulls: cut variables in resolution units (signed; -999 undefined).
             df = df.Define("v0n_bandSig",     "FCCAnalyses::AlephV0New::candBandSig(V0sNew_event, SecondaryTracks_looseBS)")
             df = df.Define("v0n_massSig",     "FCCAnalyses::AlephV0New::candMassSig(V0sNew_event)")
+            # V0 vertex-fit covariance (packed lower triangle, cm^2 — same
+            # component order as Vertex_refit_cov_*): settles the pointSig
+            # anisotropy attribution (track cov vs fitter cov vs PV cov)
+            for ic, cc in enumerate(("xx", "yx", "yy", "zx", "zy", "zz")):
+                df = df.Define(f"v0n_cov_{cc}", f"FCCAnalyses::AlephV0New::candCovComp(V0sNew_event, {ic})")
+            # per-daughter joins + dE/dx (truth-free: reco_ind -> sec2origIdx).
+            # dQdx.value==0 means "no measurement": both value and error come
+            # back as the -1 sentinel, keyed on the value.
+            df = df.Define("v0n_trk1_origIdx", "FCCAnalyses::AlephV0New::candDaughterOrigIdx(V0sNew_event, sec2origIdx, 0)")
+            df = df.Define("v0n_trk2_origIdx", "FCCAnalyses::AlephV0New::candDaughterOrigIdx(V0sNew_event, sec2origIdx, 1)")
+            for trk in ("trk1", "trk2"):
+                for det, dedx_coll in (("pads", "dEdxPads"), ("wires", "dEdxWires")):
+                    df = df.Define(f"v0n_{trk}_dEdx_{det}_value",
+                                   f"FCCAnalyses::AlephV0New::trackQuantityByIndex(v0n_{trk}_origIdx, {dedx_coll}.dQdx.value, {dedx_coll}.dQdx.value, _{dedx_coll}_track.index)")
+                    df = df.Define(f"v0n_{trk}_dEdx_{det}_error",
+                                   f"FCCAnalyses::AlephV0New::trackQuantityByIndex(v0n_{trk}_origIdx, {dedx_coll}.dQdx.error, {dedx_coll}.dQdx.value, _{dedx_coll}_track.index)")
             # fitted-vertex position (position-resolution studies)
             df = df.Define("v0n_vx",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 0)")
             df = df.Define("v0n_vy",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 1)")
@@ -673,7 +765,12 @@ class Analysis():
                        f"{self.ana_args.svTrkChi2}, {self.ana_args.svCosPoint}, "
                        f"{self.ana_args.svClaimMode}, {self.ana_args.svGrowShift}")
             for pfx, mode in (("svn", self.ana_args.svMaskMode), ("svm", 0)):
-                df = df.Define(f"SVs_{pfx}", f"FCCAnalyses::AlephSVNew::findSVs(SecondaryTracks_looseBS, VertexObject_looseBS, V0sNew_event, v0n_tight, {mode}, {sv_args})")
+                svn_expr = f"FCCAnalyses::AlephSVNew::findSVs(SecondaryTracks_looseBS, VertexObject_looseBS, V0sNew_event, v0n_tight, {mode}, {sv_args})"
+                if self.ana_args.newPV:
+                    # explicit entry guard (see V0sNew_event above)
+                    svn_expr = ("pv_converged ? " + svn_expr +
+                                " : FCCAnalyses::VertexingUtils::FCCAnalysesV0{}")
+                df = df.Define(f"SVs_{pfx}", svn_expr)
                 df = df.Define(f"n_{pfx}_event",    f"int(SVs_{pfx}.vtx.size())")
                 df = df.Define(f"{pfx}_mass",        f"SVs_{pfx}.invM")
                 df = df.Define(f"{pfx}_chi2",        f"FCCAnalyses::AlephTruth::candChi2(SVs_{pfx})")
@@ -689,6 +786,10 @@ class Analysis():
                 # position matching against the true SV positions
                 for ic, cc in enumerate("xyz"):
                     df = df.Define(f"{pfx}_d{cc}", f"FCCAnalyses::AlephSVNew::candDcomp(SVs_{pfx}, VertexObject_looseBS, {ic})")
+                # SV vertex-fit covariance (packed lower triangle, cm^2, same
+                # component order as Vertex_refit_cov_*)
+                for ic, cc in enumerate(("xx", "yx", "yy", "zx", "zy", "zz")):
+                    df = df.Define(f"{pfx}_cov_{cc}", f"FCCAnalyses::AlephV0New::candCovComp(SVs_{pfx}, {ic})")
 
         ############################################# Particle Flow Level Variables #######################################################
         df = df.Define("pfcand_isMu",     "AlephSelection::get_isType(jetConstitutentsTypes,2)")
@@ -898,6 +999,14 @@ class Analysis():
                 "n_v0n_event", "v0n_pdg", "v0n_invM", "v0n_alpha", "v0n_qt",
                 "v0n_chi2", "v0n_dxyz", "v0n_p", "v0n_cosPointing", "v0n_pointSig",
                 "v0n_tight", "v0n_bandSig", "v0n_massSig", "v0n_vx", "v0n_vy", "v0n_vz",
+                # vertex-fit covariance + truth-free per-daughter joins/dE/dx
+                "v0n_cov_xx", "v0n_cov_yx", "v0n_cov_yy",
+                "v0n_cov_zx", "v0n_cov_zy", "v0n_cov_zz",
+                "v0n_trk1_origIdx", "v0n_trk2_origIdx",
+                "v0n_trk1_dEdx_pads_value", "v0n_trk1_dEdx_pads_error",
+                "v0n_trk1_dEdx_wires_value", "v0n_trk1_dEdx_wires_error",
+                "v0n_trk2_dEdx_pads_value", "v0n_trk2_dEdx_pads_error",
+                "v0n_trk2_dEdx_wires_value", "v0n_trk2_dEdx_wires_error",
                 # per-jet new-module V0s (mirror of the old v0_* block) -> jet-level apples-to-apples
                 "n_v0njet_jets", "n_v0njet_ks", "n_v0njet_lambda",
                 "v0njet_pdg", "v0njet_invM", "v0njet_chi2", "v0njet_chi2_norm",
@@ -919,11 +1028,14 @@ class Analysis():
                     f"{pfx}_p", f"{pfx}_cosPointing", f"{pfx}_pointSig",
                     f"{pfx}_ntracks", f"{pfx}_sigL", f"{pfx}_trk_sv", f"{pfx}_trk_idx",
                     f"{pfx}_dx", f"{pfx}_dy", f"{pfx}_dz",
+                    # SV vertex-fit covariance
+                    f"{pfx}_cov_xx", f"{pfx}_cov_yx", f"{pfx}_cov_yy",
+                    f"{pfx}_cov_zx", f"{pfx}_cov_zy", f"{pfx}_cov_zz",
                 ]
-            if self.ana_args.truthV0:
-                # secondary->original track index map: lets offline analyses walk
-                # svn_trk_idx / v0n_trk1/2 -> original track -> trackMCLink truth
-                truth_branches += ["sec2origIdx"]
+            # (sec2origIdx lives in the always-written list — it is truth-free)
+        if self.ana_args.newPV:
+            # the two-flag surface of the standalone PV fitter
+            truth_branches += ["pv_converged", "pv_split_converged", "pv_trivial"]
 
         return truth_branches + [
             #DEBUG
@@ -955,6 +1067,13 @@ class Analysis():
             "Vertex_refit_cov_zx",
             "Vertex_refit_cov_zy",
             "Vertex_refit_cov_zz",
+            # PV fit quality + index maps + track<->pfcand join
+            "Vertex_refit_chi2",
+            "prim2origIdx",
+            "sec2origIdx",
+            "recopart_tracks_index",
+            "recopart_tracks_begin",
+            "recopart_tracks_end",
 
             # gen level vertex & resolutions
             "gen_vertex_x",
@@ -989,6 +1108,13 @@ class Analysis():
             "sv_dx",
             "sv_dy",
             "sv_dz",
+            # legacy-SV vertex-fit covariance
+            "sv_cov_xx",
+            "sv_cov_yx",
+            "sv_cov_yy",
+            "sv_cov_zx",
+            "sv_cov_zy",
+            "sv_cov_zz",
 
             # V0 candidates:
             "n_v0_event",
