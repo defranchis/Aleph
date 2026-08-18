@@ -70,7 +70,7 @@ class Analysis():
         parser.add_argument('--v0nKsPointing', default=None, type=float,
                             help='DEPRECATED/superseded by the two-tier module; using it is an error.')
         parser.add_argument('--v0nWideLamLoose', action='store_true',
-                            help='TAIL-MEASUREMENT VARIANT: loose Lambda AP band widened 0.40/0.80 to measure the band tail. Not for standard productions.')
+                            help='TAIL-MEASUREMENT VARIANT: loose Lambda AP band ramp edges doubled (0.40/0.80; stored acceptance 0.8x that) to measure the band tail. Not for standard productions.')
         parser.add_argument('--v0nLamPointKsTiers', action='store_true',
                             help='SIZING VARIANT: tight-tier Lambda pointing aligned to the Ks p-tiers. Not for standard productions; candTight still encodes the adopted package.')
         parser.add_argument('--pvchi2', default=5.0, type=float,
@@ -690,6 +690,10 @@ class Analysis():
             df = df.Define("v0n_chi2",        "FCCAnalyses::AlephTruth::candChi2(V0sNew_event)")
             df = df.Define("v0n_dxyz",        "FCCAnalyses::AlephTruth::candDxyz(V0sNew_event, VertexObject_looseBS)")
             df = df.Define("v0n_p",           "FCCAnalyses::AlephTruth::candP(V0sNew_event)")
+            # momentum VECTOR of the same summed vertex momentum as v0n_p
+            # (direction-dependent offline studies: pointing at any reference)
+            for ic, cc in enumerate("xyz"):
+                df = df.Define(f"v0n_p{cc}",  f"FCCAnalyses::AlephTruth::candPcomp(V0sNew_event, {ic})")
             df = df.Define("v0n_cosPointing", "FCCAnalyses::AlephTruth::candCosPointing(V0sNew_event, VertexObject_looseBS)")
             df = df.Define("v0n_pointSig",    "FCCAnalyses::AlephV0New::candPointSig(V0sNew_event, VertexObject_looseBS)")
             # two-tier module: 1 = adopted tight package, 0 = loose training tier.
@@ -790,6 +794,15 @@ class Analysis():
                 # component order as Vertex_refit_cov_*)
                 for ic, cc in enumerate(("xx", "yx", "yy", "zx", "zy", "zz")):
                     df = df.Define(f"{pfx}_cov_{cc}", f"FCCAnalyses::AlephV0New::candCovComp(SVs_{pfx}, {ic})")
+
+            # V0-candidate pointing at the nearest svn vertex (largest cosine),
+            # feature only: no coupling back into the V0 or SV selections.
+            # SVs sharing a daughter track with the candidate are excluded
+            # (self-pointing); sentinels cos=-2, sig=-1, idx=-1.
+            df = df.Define("v0n_svnpoint",    "FCCAnalyses::AlephV0New::candSVPointing(V0sNew_event, SVs_svn, sec2origIdx)")
+            df = df.Define("v0n_svnCosPoint", "v0n_svnpoint.cosPoint")
+            df = df.Define("v0n_svnPointSig", "v0n_svnpoint.pointSig")
+            df = df.Define("v0n_svnIdx",      "v0n_svnpoint.svIdx")
 
         ############################################# Particle Flow Level Variables #######################################################
         df = df.Define("pfcand_isMu",     "AlephSelection::get_isType(jetConstitutentsTypes,2)")
@@ -997,7 +1010,8 @@ class Analysis():
         if self.ana_args.newV0:
             truth_branches += [
                 "n_v0n_event", "v0n_pdg", "v0n_invM", "v0n_alpha", "v0n_qt",
-                "v0n_chi2", "v0n_dxyz", "v0n_p", "v0n_cosPointing", "v0n_pointSig",
+                "v0n_chi2", "v0n_dxyz", "v0n_p", "v0n_px", "v0n_py", "v0n_pz",
+                "v0n_cosPointing", "v0n_pointSig",
                 "v0n_tight", "v0n_bandSig", "v0n_massSig", "v0n_vx", "v0n_vy", "v0n_vz",
                 # vertex-fit covariance + truth-free per-daughter joins/dE/dx
                 "v0n_cov_xx", "v0n_cov_yx", "v0n_cov_yy",
@@ -1032,6 +1046,8 @@ class Analysis():
                     f"{pfx}_cov_xx", f"{pfx}_cov_yx", f"{pfx}_cov_yy",
                     f"{pfx}_cov_zx", f"{pfx}_cov_zy", f"{pfx}_cov_zz",
                 ]
+            # V0 -> nearest-svn pointing feature
+            truth_branches += ["v0n_svnCosPoint", "v0n_svnPointSig", "v0n_svnIdx"]
             # (sec2origIdx lives in the always-written list — it is truth-free)
         if self.ana_args.newPV:
             # the two-flag surface of the standalone PV fitter

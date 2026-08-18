@@ -536,6 +536,19 @@ inline RVec<float> candP(const VertexingUtils::FCCAnalysesV0& v0s) {
   return out;
 }
 
+// Component comp (0/1/2 = x/y/z) of the SAME summed vertex momentum whose
+// magnitude candP returns, so sqrt(px^2+py^2+pz^2) reproduces candP by
+// construction (no second estimate of the candidate momentum).
+inline RVec<float> candPcomp(const VertexingUtils::FCCAnalysesV0& v0s, int comp) {
+  RVec<float> out;
+  for (const auto& v : v0s.vtx) {
+    TVector3 p(0., 0., 0.);
+    for (const auto& tp : v.updated_track_momentum_at_vertex) p += tp;
+    out.push_back(p[comp]);
+  }
+  return out;
+}
+
 inline RVec<float> candCosPointing(const VertexingUtils::FCCAnalysesV0& v0s,
                                    const VertexingUtils::FCCAnalysesVertex& PV) {
   RVec<float> out;

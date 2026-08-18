@@ -83,6 +83,12 @@ constexpr double LOOSE_COS_POINT = 0.999;
 constexpr double LOOSE_QT_MIN_LAM = 0.02;
 constexpr double LOOSE_NSIG_KS = 6.;
 constexpr double LOOSE_LAM_BAND_LO = 0.20, LOOSE_LAM_BAND_HI = 0.40;
+// LOOSE Lambda band-distance acceptance: the stored loose tier keeps
+// |ell-1| / thr(p) below this fraction of the ramp half-width (see
+// lamBandThrLoose). Measured on the Lambda-tail study as the working point
+// that removes the bulk of the m>1.14 GeV combinatorial tail at ~zero true
+// Lambda cost.
+constexpr double LOOSE_LAM_BAND_FRAC = 0.8;
 // widened loose Lambda band for the tail-measurement variant (2x nominal)
 constexpr double WIDE_LAM_BAND_LO = 2. * LOOSE_LAM_BAND_LO,
                  WIDE_LAM_BAND_HI = 2. * LOOSE_LAM_BAND_HI;
@@ -149,17 +155,33 @@ inline double sigmaEllLam(double pmag) {
                    std::pow(SIG_ELL_LAM_C * pmag * pmag, 2));
 }
 // TIGHT Lambda AP band: resolution-scaled, floored at the earlier fixed low-p
-// edge and CAPPED at the loose storage edge (measured on b/c events:
+// edge and CAPPED at the nominal ramp edge (measured on b/c events:
 // +2.0/+3.9pp true Lambda >10 GeV at ~-1.4pp local purity; the cap avoids
-// dilute >25 GeV admissions and keeps every tight candidate inside the stored
-// loose superset, so the selection stays offline-reversible).
-// The cap deliberately references the NOMINAL loose edges: the adopted tight
-// package is config-independent (tight remains a subset of any loose band,
-// including the widened tail-measurement variant).
+// dilute >25 GeV admissions).
+// The cap deliberately references the NOMINAL loose ramp edges, so the adopted
+// tight package is config-independent. The tight-inside-loose invariant is
+// enforced on the LOOSE side: lamBandThrLoose floors its threshold at this
+// value, so every tight candidate stays inside the stored loose superset at
+// every momentum and the selection stays offline-reversible.
 inline double lamBandThrTight(double pmag, double floor_ = AP_LAM_LO,
                               double nsig = TIGHT_LAM_NSIG) {
   return std::min(std::max(floor_, nsig * sigmaEllLam(pmag)),
                   lamBandThr(pmag, LOOSE_LAM_BAND_LO, LOOSE_LAM_BAND_HI));
+}
+
+// LOOSE Lambda AP band: BAND-DISTANCE convention — the stored acceptance is a
+// fixed fraction of the ramp half-width at every momentum
+// (|ell-1| < LOOSE_LAM_BAND_FRAC * thr(p)) instead of the raw ramp, which
+// admitted a wide combinatorial tail well beyond the measured band resolution.
+// Floored at the tight threshold so the loose tier stays a superset of the
+// tight one at every momentum; tight_floor mirrors the tight-clause floor of
+// the caller, so the invariant holds under a floor override too. With the
+// nominal ramp the fraction falls below the tight threshold above ~22 GeV,
+// where the two tiers coincide and no loose-only Lambda sideband remains.
+inline double lamBandThrLoose(double pmag, double lo, double hi,
+                              double tight_floor = AP_LAM_LO) {
+  return std::max(LOOSE_LAM_BAND_FRAC * lamBandThr(pmag, lo, hi),
+                  lamBandThrTight(pmag, tight_floor));
 }
 
 // momenta of the two tracks at the fitted vertex (already rescaled to the true
@@ -207,8 +229,8 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
     double chi2_cut = CHI2_CUT,                        // vertex chi2 (ndf=1, common)
     double trk_chi2_cut = -1.,                         // per-track chi2 (<=0 off, common)
     bool lam_point_ks_tiers = false,                   // sizing variant: tight Lambda pointing uses the Ks p-tiers instead of cos_point_lam; candTight still encodes the ADOPTED package
-    double loose_lam_lo = LOOSE_LAM_BAND_LO,           // tail-measurement variant: LOOSE Lambda AP band edges,
-    double loose_lam_hi = LOOSE_LAM_BAND_HI) {         // widen to measure the true band tail beyond the stored acceptance
+    double loose_lam_lo = LOOSE_LAM_BAND_LO,           // tail-measurement variant: LOOSE Lambda AP band ramp edges; the stored acceptance is
+    double loose_lam_hi = LOOSE_LAM_BAND_HI) {         // LOOSE_LAM_BAND_FRAC x this ramp, floored at the tight band (lamBandThrLoose)
 
   VertexingUtils::FCCAnalysesV0 result;
   const int nTr = np_tracks.size();
@@ -304,7 +326,7 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
         okLam = inWinLam && cp > LOOSE_COS_POINT && qt > LOOSE_QT_MIN_LAM;
         if (okLam && ap_lam_lo > 0)
           okLam = std::abs(lamBandEll(alpha, qt, pmag) - 1.) <
-                  lamBandThr(pmag, loose_lam_lo, loose_lam_hi);
+                  lamBandThrLoose(pmag, loose_lam_lo, loose_lam_hi, ap_lam_lo);
         if (!okKs && !okLam) continue;
       }
       double dks = std::abs(mks - MKS) / (0.5 * (ks_m_hi - ks_m_lo));
@@ -363,7 +385,8 @@ inline VertexingUtils::FCCAnalysesV0 findV0sLamKsPointing(
 
 // ---------------------------------------------------------------------------
 // Tail-measurement entry point: adopted defaults except the LOOSE Lambda AP
-// band widened 0.20/0.40 → 0.40/0.80, so the band tail beyond the standard
+// band ramp edges doubled 0.20/0.40 → 0.40/0.80 (stored acceptance is
+// LOOSE_LAM_BAND_FRAC times the ramp), so the band tail beyond the standard
 // loose acceptance becomes measurable offline. NOT for standard productions;
 // as above, v0n_tight in its output still encodes the adopted tight package.
 // ---------------------------------------------------------------------------
@@ -522,43 +545,51 @@ inline RVec<float> candMassSig(const VertexingUtils::FCCAnalysesV0& v0s) {
 }
 
 // Pointing significance: chi2-like significance of the displacement component
-// PERPENDICULAR to the candidate momentum, using candidate + PV position
-// covariance (all in the consistent cm space). A well-pointing candidate has
-// sig ~ O(1) regardless of how precisely it is measured — the basis for
-// replacing the fixed cosPointing threshold with a measurement-aware cut.
-// Returns -1 if the transverse covariance is singular/non-positive.
+// PERPENDICULAR to the candidate momentum, using candidate + reference-vertex
+// position covariance (all in the consistent cm space). A well-pointing
+// candidate has sig ~ O(1) regardless of how precisely it is measured — the
+// basis for replacing the fixed cosPointing threshold with a measurement-aware
+// cut. Returns -1 for degenerate geometry or a singular/non-positive
+// transverse covariance.
+//   d  = candidate vertex - reference vertex, p = candidate momentum
+//   cV / cR = packed lower-triangular position covariances (xx,yx,yy,zx,zy,zz)
+// The reference is the PV for candPointSig and an SV for candSVPointing.
+template <typename CovV, typename CovR>
+inline float pointSigTransverse(const TVector3& d, const TVector3& p,
+                                const CovV& cV, const CovR& cR) {
+  if (p.Mag() <= 0 || d.Mag() <= 0) return -1.;
+  TVector3 ph = p.Unit();
+  TVector3 u1 = ph.Orthogonal().Unit();
+  TVector3 u2 = ph.Cross(u1);
+  double C[3][3] = {
+    {double(cV[0]) + cR[0], double(cV[1]) + cR[1], double(cV[3]) + cR[3]},
+    {double(cV[1]) + cR[1], double(cV[2]) + cR[2], double(cV[4]) + cR[4]},
+    {double(cV[3]) + cR[3], double(cV[4]) + cR[4], double(cV[5]) + cR[5]}};
+  auto quad = [&](const TVector3& a, const TVector3& b) {
+    double s = 0.;
+    double av[3] = {a.X(), a.Y(), a.Z()}, bv[3] = {b.X(), b.Y(), b.Z()};
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j) s += av[i] * C[i][j] * bv[j];
+    return s;
+  };
+  double c11 = quad(u1, u1), c22 = quad(u2, u2), c12 = quad(u1, u2);
+  double det = c11 * c22 - c12 * c12;
+  if (det <= 0. || c11 <= 0. || c22 <= 0.) return -1.;
+  double d1 = d.Dot(u1), d2 = d.Dot(u2);
+  double sig2 = (d1 * (c22 * d1 - c12 * d2) + d2 * (c11 * d2 - c12 * d1)) / det;
+  return sig2 > 0. ? std::sqrt(sig2) : 0.;
+}
+
 inline RVec<float> candPointSig(const VertexingUtils::FCCAnalysesV0& v0s,
                                 const VertexingUtils::FCCAnalysesVertex& PV) {
   RVec<float> out;
   TVector3 pv(PV.vertex.position[0], PV.vertex.position[1], PV.vertex.position[2]);
-  const auto& cP = PV.vertex.covMatrix; // packed lower-tri: xx,xy,yy,xz,yz,zz
   for (const auto& v : v0s.vtx) {
     TVector3 x(v.vertex.position[0], v.vertex.position[1], v.vertex.position[2]);
     TVector3 p(0., 0., 0.);
     for (const auto& tp : v.updated_track_momentum_at_vertex) p += tp;
-    TVector3 d = x - pv;
-    if (p.Mag() <= 0 || d.Mag() <= 0) { out.push_back(-1.); continue; }
-    TVector3 ph = p.Unit();
-    TVector3 u1 = ph.Orthogonal().Unit();
-    TVector3 u2 = ph.Cross(u1);
-    const auto& cV = v.vertex.covMatrix;
-    double C[3][3] = {
-      {double(cV[0]) + cP[0], double(cV[1]) + cP[1], double(cV[3]) + cP[3]},
-      {double(cV[1]) + cP[1], double(cV[2]) + cP[2], double(cV[4]) + cP[4]},
-      {double(cV[3]) + cP[3], double(cV[4]) + cP[4], double(cV[5]) + cP[5]}};
-    auto quad = [&](const TVector3& a, const TVector3& b) {
-      double s = 0.;
-      double av[3] = {a.X(), a.Y(), a.Z()}, bv[3] = {b.X(), b.Y(), b.Z()};
-      for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j) s += av[i] * C[i][j] * bv[j];
-      return s;
-    };
-    double c11 = quad(u1, u1), c22 = quad(u2, u2), c12 = quad(u1, u2);
-    double det = c11 * c22 - c12 * c12;
-    if (det <= 0. || c11 <= 0. || c22 <= 0.) { out.push_back(-1.); continue; }
-    double d1 = d.Dot(u1), d2 = d.Dot(u2);
-    double sig2 = (d1 * (c22 * d1 - c12 * d2) + d2 * (c11 * d2 - c12 * d1)) / det;
-    out.push_back(sig2 > 0. ? std::sqrt(sig2) : 0.);
+    out.push_back(pointSigTransverse(x - pv, p, v.vertex.covMatrix,
+                                     PV.vertex.covMatrix));
   }
   return out;
 }
@@ -601,6 +632,89 @@ inline RVec<int> candDaughterOrigIdx(const VertexingUtils::FCCAnalysesV0& v0s,
       if (s >= 0 && s < (int)sec2orig.size()) idx = sec2orig[s];
     }
     out.push_back(idx);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Pointing of every V0 candidate at the nearest secondary vertex.
+// PURELY A FEATURE: nothing here feeds back into candidate definition,
+// hypothesis arbitration or track claiming.
+//
+// "Nearest" = the SV giving the LARGEST cosine between the candidate momentum
+// and the SV->candidate flight line, among the allowed SVs. An SV sharing a
+// daughter track with the candidate is excluded: SV finding masks, by default,
+// only the TIGHT-claimed V0 tracks, so a loose-tier candidate's own pair can
+// reappear as an SV sitting on top of the V0 vertex (self-pointing artefact).
+//
+// INDEX SPACES: SV reco_ind lives in the SECONDARY track collection, so both
+// legs of the overlap test are walked through sec2orig into the ORIGINAL
+// Tracks space before comparison; an unmapped index (-1) never matches. The
+// veto therefore fails OPEN: a candidate whose daughters do not map back to
+// original tracks excludes nothing.
+//
+// Sentinels (cos = -2, sig = -1, idx = -1) whenever no usable SV remains:
+// no SV in the event, all of them vetoed, all of them coincident with the
+// candidate vertex, or a null candidate momentum. Truth-free (works on data).
+// Note: pointSig is also -1 when pointSigTransverse() meets a singular
+// transverse covariance while an SV WAS selected (idx >= 0, cos valid), so
+// "no SV" must be tested on idx (or cos), never on pointSig alone.
+// ---------------------------------------------------------------------------
+struct V0SVPointing {
+  RVec<float> cosPoint;  // cos(candidate momentum, SV->candidate vector)
+  RVec<float> pointSig;  // transverse pointing significance wrt that SV
+  RVec<int>   svIdx;     // index of that SV in the SV collection
+};
+
+inline V0SVPointing candSVPointing(const VertexingUtils::FCCAnalysesV0& v0s,
+                                   const VertexingUtils::FCCAnalysesV0& svs,
+                                   const RVec<int>& sec2orig) {
+  V0SVPointing out;
+  const int nSec = (int)sec2orig.size();
+  auto toOrig = [&](int s) { return (s >= 0 && s < nSec) ? sec2orig[s] : -1; };
+
+  std::vector<std::vector<int>> sv_orig(svs.vtx.size());
+  for (size_t s = 0; s < svs.vtx.size(); ++s)
+    for (int t : svs.vtx[s].reco_ind) {
+      int o = toOrig(t);
+      if (o >= 0) sv_orig[s].push_back(o);
+    }
+
+  for (const auto& v : v0s.vtx) {
+    int o1 = (v.reco_ind.size() > 0) ? toOrig(v.reco_ind[0]) : -1;
+    int o2 = (v.reco_ind.size() > 1) ? toOrig(v.reco_ind[1]) : -1;
+    TVector3 x(v.vertex.position[0], v.vertex.position[1], v.vertex.position[2]);
+    TVector3 p(0., 0., 0.);
+    for (const auto& tp : v.updated_track_momentum_at_vertex) p += tp;
+
+    int best = -1;
+    double best_cos = -2.;
+    if (p.Mag() > 0.) {
+      for (size_t s = 0; s < svs.vtx.size(); ++s) {
+        bool shared = false;
+        for (int o : sv_orig[s])
+          if (o == o1 || o == o2) { shared = true; break; }
+        if (shared) continue;
+        const auto& sv = svs.vtx[s].vertex;
+        TVector3 d = x - TVector3(sv.position[0], sv.position[1], sv.position[2]);
+        double dm = d.Mag();
+        if (dm <= 0.) continue;
+        double cp = d.Dot(p) / (dm * p.Mag());
+        if (best < 0 || cp > best_cos) { best_cos = cp; best = (int)s; }
+      }
+    }
+    if (best < 0) {
+      out.cosPoint.push_back(-2.);
+      out.pointSig.push_back(-1.);
+      out.svIdx.push_back(-1);
+      continue;
+    }
+    const auto& sv = svs.vtx[best].vertex;
+    TVector3 d = x - TVector3(sv.position[0], sv.position[1], sv.position[2]);
+    out.cosPoint.push_back(best_cos);
+    out.pointSig.push_back(pointSigTransverse(d, p, v.vertex.covMatrix,
+                                              sv.covMatrix));
+    out.svIdx.push_back(best);
   }
   return out;
 }
