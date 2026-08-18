@@ -335,7 +335,7 @@ class Analysis():
         df = df.Define("n_tracks_all", "Tracks.size()")
         df = df.Define("chi2_tracks_all","AlephSelection::get_track_chi2( Tracks )") #TODO: use collection here
         df = df.Define("ndf_tracks_all","AlephSelection::get_track_ndf( Tracks )") #TODO: use collection here
-        df = df.Define("chi2_o_ndf_tracks_all","AlephSelection::get_track_ndf( Tracks )") #TODO: use collection here
+        df = df.Define("chi2_o_ndf_tracks_all","AlephSelection::get_track_chi2_o_ndf( Tracks )") #TODO: use collection here
         
         # baseline track selection: positive definite cov matrix & chi2 < 10 
         df = df.Define("tracks_selected_baseline_result","AlephSelection::select_tracks_baseline( Tracks, _Tracks_trackStates )") #TODO: use collection here  0.75, 2.0

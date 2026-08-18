@@ -282,9 +282,10 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
       if (pmag <= 0) continue;
       double cp = d.Dot(p) / (dis * pmag);
       double qt = p1.Cross(p.Unit()).Mag(); // Armenteros qT (same for either daughter)
-      // Armenteros alpha: physical charge = -sign(omega) (flipped collection)
+      // Armenteros alpha: physical charge = +sign(omega) for the flipD0_copy'ed
+      // collection (raw ALEPH omega carries -charge, the flip restores +charge)
       double la = p1.Dot(p) / pmag, lb = p2.Dot(p) / pmag;
-      double q1 = (np_tracks[i].omega < 0) ? 1. : -1.;
+      double q1 = (np_tracks[i].omega > 0) ? 1. : -1.;
       double lplus = (q1 > 0) ? la : lb, lminus = (q1 > 0) ? lb : la;
       double alpha = (lplus + lminus != 0.) ? (lplus - lminus) / (lplus + lminus) : 0.;
 
@@ -420,7 +421,7 @@ inline RVec<float> candAlpha(const VertexingUtils::FCCAnalysesV0& v0s,
     TVector3 pb = v.updated_track_momentum_at_vertex[1];
     TVector3 p = pa + pb;
     double la = pa.Dot(p) / p.Mag(), lb = pb.Dot(p) / p.Mag();
-    double q1 = (secondaries[v.reco_ind[0]].omega < 0) ? 1. : -1.;
+    double q1 = (secondaries[v.reco_ind[0]].omega > 0) ? 1. : -1.;
     double lp = (q1 > 0) ? la : lb, lm = (q1 > 0) ? lb : la;
     out.push_back((lp + lm != 0.) ? (lp - lm) / (lp + lm) : -99.);
   }
@@ -460,7 +461,7 @@ inline RVec<int> candTight(const VertexingUtils::FCCAnalysesV0& v0s,
     double cp = d.Dot(p) / (dis * pmag);
     double qt = p1.Cross(p.Unit()).Mag();
     double la = p1.Dot(p) / pmag, lb = p2.Dot(p) / pmag;
-    double q1 = (secondaries[v.reco_ind[0]].omega < 0) ? 1. : -1.;
+    double q1 = (secondaries[v.reco_ind[0]].omega > 0) ? 1. : -1.;
     double lplus = (q1 > 0) ? la : lb, lminus = (q1 > 0) ? lb : la;
     double alpha = (lplus + lminus != 0.) ? (lplus - lminus) / (lplus + lminus) : 0.;
     double m = v0s.invM[c];
@@ -512,7 +513,7 @@ inline RVec<float> candBandSig(const VertexingUtils::FCCAnalysesV0& v0s,
     if (pmag <= 0) { out.push_back(-999.); continue; }
     double qt = p1.Cross(p.Unit()).Mag();
     double la = p1.Dot(p) / pmag, lb = p2.Dot(p) / pmag;
-    double q1 = (secondaries[v.reco_ind[0]].omega < 0) ? 1. : -1.;
+    double q1 = (secondaries[v.reco_ind[0]].omega > 0) ? 1. : -1.;
     double lplus = (q1 > 0) ? la : lb, lminus = (q1 > 0) ? lb : la;
     double alpha = (lplus + lminus != 0.) ? (lplus - lminus) / (lplus + lminus) : 0.;
     if (v0s.pdgAbs[c] == 310)

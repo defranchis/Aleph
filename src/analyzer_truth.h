@@ -446,7 +446,8 @@ inline V0TruthInfo classifyV0s(const VertexingUtils::FCCAnalysesV0& v0s,
 
     // Armenteros-Podolanski from updated momenta at the fitted vertex
     // (momentum order follows the fitted pair order i1,i2). SecondaryTracks
-    // are flipD0_copy'ed, so physical charge = -sign(omega).
+    // are flipD0_copy'ed (raw ALEPH omega carries -charge), so physical
+    // charge = +sign(omega).
     float alpha = -99., qt = -99.;
     const auto& upd = v0s.vtx[c].updated_track_momentum_at_vertex;
     if (upd.size() == 2) {
@@ -455,7 +456,7 @@ inline V0TruthInfo classifyV0s(const VertexingUtils::FCCAnalysesV0& v0s,
       if (ptot.Mag() > 0) {
         double la = pa.Dot(ptot) / ptot.Mag();
         double lb = pb.Dot(ptot) / ptot.Mag();
-        double q_a = (secondaries.at(vp.i1[c]).omega < 0) ? 1. : -1.;
+        double q_a = (secondaries.at(vp.i1[c]).omega > 0) ? 1. : -1.;
         double lplus = (q_a > 0) ? la : lb;
         double lminus = (q_a > 0) ? lb : la;
         alpha = (lplus + lminus != 0.) ? (lplus - lminus) / (lplus + lminus) : -99.;
