@@ -889,6 +889,26 @@ get_ptrel_log_cluster(const rv::RVec<fastjet::PseudoJet> &jets,
   return out;
 }
 
+// Re-order a track-indexed collection through the ReconstructedParticle->Track
+// relation: entry j of the result is the object that relation entry j points at.
+// ReconstructedParticle::tracks_begin is an offset into that relation, not a
+// track index, and in the ALEPH files the two are not parallel; after this
+// re-ordering coll.at(p.tracks_begin) is correct, and neutral particles
+// (tracks_begin == number of links) fall outside the collection.
+template <typename T>
+rv::RVec<T> reindexByRPLink(const rv::RVec<T> &coll,
+                            const rv::RVec<int> &rpTrackIndex) {
+  rv::RVec<T> out;
+  out.reserve(rpTrackIndex.size());
+  for (int idx : rpTrackIndex) {
+    if (idx >= 0 && idx < static_cast<int>(coll.size()))
+      out.push_back(coll.at(idx));
+    else
+      out.emplace_back();   // keeps the collection aligned with the relation
+  }
+  return out;
+}
+
 // --- per-constituent track quality -----------------------------------------
 // A ReconstructedParticle points at its track via tracks_begin; neutral
 // constituents have no track, for which we store -1 (as the reference does).
