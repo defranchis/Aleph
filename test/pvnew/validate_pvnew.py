@@ -467,7 +467,7 @@ def main():
         mv = np.array([mom.X(), mom.Y(), mom.Z()])
         cosang = mv.dot(tang) / (np.linalg.norm(mv) * np.linalg.norm(tang))
         worst_dp = max(worst_dp, 1 - cosang)
-        # 0.0029979*1.5 = kPtPerTeslaCm (analyzer_pvnew.h) x BZ (stage1.py)
+        # 0.0029979*1.5 = kPtPerTeslaCm (aleph_units.h) x BZ (stage1.py)
         pt_orig = 0.0029979 * 1.5 / abs(par[i, 2])
         if i < 3:
             out("    trk %d: |X(smoothed)-PV| = %.2e cm  pT=%.3f GeV "

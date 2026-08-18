@@ -80,14 +80,15 @@
 #include "edm4hep/TrackState.h"
 #include "edm4hep/EDM4hepVersion.h"
 #include "FCCAnalyses/VertexingUtils.h"
+#include "aleph_units.h"
 
 namespace FCCAnalyses {
 namespace AlephPVNew {
 
 using ROOT::VecOps::RVec;
 
-// pT [GeV] = kPtPerTeslaCm * Bz [T] / |omega [1/cm]| (0.29979 GeV/T/m in cm)
-constexpr double kPtPerTeslaCm = 0.0029979;
+// pT [GeV] = kPtPerTeslaCm * Bz [T] / |omega [1/cm]| (single source: aleph_units.h)
+constexpr double kPtPerTeslaCm = AlephUnits::kPtPerTeslaCm;
 // default per-track chi2 pruning threshold; mirrors the stage1 --pvchi2
 // production default
 constexpr double kDefaultPVChi2 = 5.0;
