@@ -75,6 +75,14 @@ class Analysis():
                             help='SIZING VARIANT: tight-tier Lambda pointing aligned to the Ks p-tiers. Not for standard productions; candTight still encodes the adopted package.')
         parser.add_argument('--pvchi2', default=5.0, type=float,
                             help='chi2max for PV track compatibility in get_PrimaryTracks (default 5.0 = validated baseline; lower = fewer tracks claimed primary = more secondaries).')
+        parser.add_argument('--pvIPRefBS', action='store_true',
+                            help='PV track pre-selection |D0|,|Z0| measured w.r.t. the run beamspot instead of the origin (data only matters; also moves the primary/secondary split).')
+        parser.add_argument('--pvIPWindow', nargs=2, default=[0.75, 2.0], type=float,
+                            metavar=('D0MAX', 'Z0MAX'),
+                            help='PV track pre-selection |D0|, |Z0| upper bounds [cm] (default 0.75 2.0).')
+        parser.add_argument('--pvBSWidth', nargs=3, default=[200., 100., 2.], type=float,
+                            metavar=('SX', 'SY', 'SZ'),
+                            help='beamspot-constraint widths for BOTH PV fits: SX, SY [um], SZ [cm] (default 200 100 2).')
         # Parse additional arguments not known to the FCCAnalyses parsers
         # All command line arguments know to fccanalysis are provided in the
         # `cmdline_arg` dictionary.
@@ -328,46 +336,7 @@ class Analysis():
         df = df.Define("event_invariant_mass", "JetConstituentsUtils::InvariantMass(jet_p4[0], jet_p4[1])")
 
 
-        # ==== Track selection (to harmonize with Luka's code)
-        # Note: The selection strategy here only works if there is one trackstate stored pre track.
-        # The code includes an assertion for that, if it is somehow not the case it will fail. 
-        # df = df.Define("n_tracks_all", f"AlephSelection::select_tracks( {coll['PFTracks']} )")
-        df = df.Define("n_tracks_all", "Tracks.size()")
-        df = df.Define("chi2_tracks_all","AlephSelection::get_track_chi2( Tracks )") #TODO: use collection here
-        df = df.Define("ndf_tracks_all","AlephSelection::get_track_ndf( Tracks )") #TODO: use collection here
-        df = df.Define("chi2_o_ndf_tracks_all","AlephSelection::get_track_chi2_o_ndf( Tracks )") #TODO: use collection here
-        
-        # baseline track selection: positive definite cov matrix & chi2 < 10 
-        df = df.Define("tracks_selected_baseline_result","AlephSelection::select_tracks_baseline( Tracks, _Tracks_trackStates )") #TODO: use collection here  0.75, 2.0
-        df = df.Define("tracks_selected_baseline","tracks_selected_baseline_result.tracks") 
-        df = df.Define("trackstates_selected_baseline","tracks_selected_baseline_result.trackStates") 
-
-        # impose upper bounds on impact parameters to pre-select compatible tracks for the primary vertex fit 
-        df = df.Define("tracks_selected_for_vertexfit_result","AlephSelection::select_tracks_impactparameters( tracks_selected_baseline_result, 0.75, 2.0 )") 
-        df = df.Define("tracks_selected_for_vertexfit","tracks_selected_for_vertexfit_result.tracks") 
-        df = df.Define("trackstates_selected_for_vertexfit","tracks_selected_for_vertexfit_result.trackStates") 
-
-        df = df.Define("n_tracks_sel", "tracks_selected_baseline.size()")
-        df = df.Define("n_trackstates_sel", "trackstates_selected_baseline.size()") #for debug
-
-        df = df.Define("n_tracks_sel_vertexfit", "tracks_selected_for_vertexfit.size()")
-
-        # need to flip the sign of d0 and omega (why??)
-        df = df.Define("trackstates_selected_for_vertexfit_flipped","AlephSelection::flipD0_copy(trackstates_selected_for_vertexfit )")
-        df = df.Define("trackstates_selected_baseline_flipped","AlephSelection::flipD0_copy(trackstates_selected_baseline )")
-
-        # ===== VERTEX
-
-        # run primary vertex fit using FCCAna native fitter
-
-        # Luka's loose BS constraints from looking at data
-        res_x_loose = 200. # in um
-        res_y_loose = 100. # in um
-        res_z_loose = 2. # in cm
-
-        chi2max = self.ana_args.pvchi2 # the maximum chi2 under which tracks are compatible with vertex fit (default 5.)
-
-        # Beamspot POSITION (the widths above are its size; this is its centre).
+        # Beamspot POSITION (the constraint widths set below are its size; this is its centre).
         # In simulation the beamspot is at the origin by construction. In data it is offset by
         # ~0.6 mm in x and ~0.2 mm in y, i.e. 2-3x the transverse widths used as the constraint,
         # so leaving it at 0 would bias the fit. Values are per-run, in the same 10um units as
@@ -388,6 +357,53 @@ class Analysis():
             df = df.Define("Beamspot_x", "0.0")
             df = df.Define("Beamspot_y", "0.0")
             df = df.Define("Beamspot_z", "0.0")
+
+        # ==== Track selection (to harmonize with Luka's code)
+        # Note: The selection strategy here only works if there is one trackstate stored pre track.
+        # The code includes an assertion for that, if it is somehow not the case it will fail. 
+        # df = df.Define("n_tracks_all", f"AlephSelection::select_tracks( {coll['PFTracks']} )")
+        df = df.Define("n_tracks_all", "Tracks.size()")
+        df = df.Define("chi2_tracks_all","AlephSelection::get_track_chi2( Tracks )") #TODO: use collection here
+        df = df.Define("ndf_tracks_all","AlephSelection::get_track_ndf( Tracks )") #TODO: use collection here
+        df = df.Define("chi2_o_ndf_tracks_all","AlephSelection::get_track_chi2_o_ndf( Tracks )") #TODO: use collection here
+        
+        # baseline track selection: positive definite cov matrix & chi2 < 10 
+        df = df.Define("tracks_selected_baseline_result","AlephSelection::select_tracks_baseline( Tracks, _Tracks_trackStates )") #TODO: use collection here  0.75, 2.0
+        df = df.Define("tracks_selected_baseline","tracks_selected_baseline_result.tracks") 
+        df = df.Define("trackstates_selected_baseline","tracks_selected_baseline_result.trackStates") 
+
+        # impose upper bounds on impact parameters to pre-select compatible tracks for the primary vertex fit 
+        # With --pvIPRefBS the bounds are applied to impact parameters re-referenced to the run
+        # beamspot instead of the origin (Beamspot_* are in 10um units -> cm); the raw track states
+        # are referenced to the origin, so in data the origin-referenced window is off-centre by the
+        # beamspot offset. No effect on MC, where the beamspot is at the origin.
+        d0_ip_max, z0_ip_max = self.ana_args.pvIPWindow
+        if self.ana_args.pvIPRefBS:
+            df = df.Define("tracks_selected_for_vertexfit_result","AlephSelection::select_tracks_impactparameters_bs( tracks_selected_baseline_result, {}, {}, Beamspot_x*1e-3, Beamspot_y*1e-3, Beamspot_z*1e-3 )".format(d0_ip_max, z0_ip_max)) 
+        else:
+            df = df.Define("tracks_selected_for_vertexfit_result","AlephSelection::select_tracks_impactparameters( tracks_selected_baseline_result, {}, {} )".format(d0_ip_max, z0_ip_max)) 
+        df = df.Define("tracks_selected_for_vertexfit","tracks_selected_for_vertexfit_result.tracks") 
+        df = df.Define("trackstates_selected_for_vertexfit","tracks_selected_for_vertexfit_result.trackStates") 
+
+        df = df.Define("n_tracks_sel", "tracks_selected_baseline.size()")
+        df = df.Define("n_trackstates_sel", "trackstates_selected_baseline.size()") #for debug
+
+        df = df.Define("n_tracks_sel_vertexfit", "tracks_selected_for_vertexfit.size()")
+
+        # need to flip the sign of d0 and omega (why??)
+        df = df.Define("trackstates_selected_for_vertexfit_flipped","AlephSelection::flipD0_copy(trackstates_selected_for_vertexfit )")
+        df = df.Define("trackstates_selected_baseline_flipped","AlephSelection::flipD0_copy(trackstates_selected_baseline )")
+
+        # ===== VERTEX
+
+        # run primary vertex fit using FCCAna native fitter
+
+        # Luka's loose BS constraints from looking at data; override with --pvBSWidth SX SY SZ
+        res_x_loose = self.ana_args.pvBSWidth[0] # in um
+        res_y_loose = self.ana_args.pvBSWidth[1] # in um
+        res_z_loose = self.ana_args.pvBSWidth[2] # in cm
+
+        chi2max = self.ana_args.pvchi2 # the maximum chi2 under which tracks are compatible with vertex fit (default 5.)
 
         if self.ana_args.newPV:
             # Standalone PV fitter (analyzer_pvnew.h): one fitter, one unit

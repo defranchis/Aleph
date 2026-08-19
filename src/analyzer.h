@@ -367,6 +367,50 @@ select_tracks_impactparameters(const SelectedTracks& input,
 }
 
 
+// Same pre-selection with |D0|, |Z0| measured w.r.t. the beamspot b = (bsx, bsy,
+// bsz) [cm] instead of the origin (raw ALEPH states are origin-referenced; in
+// data the beamspot is ~0.7 mm off in xy and up to ~1 cm in z).
+// Perigee re-referencing, u = (cos phi, sin phi), n = (-sin phi, cos phi):
+//   s   = u.b
+//   D0' = D0 + n.b + omega*s^2/2     (curvature term < 2 um, kept for exactness)
+//   Z0' = Z0 - bsz + tanLambda*s
+// Sign: raw ALEPH/FRFT d0 convention is opposite to EDM4HEP (flipD0_copy flips
+// D0 and omega together), hence +n.b here. Fixed empirically: with it the phi
+// modulation of the median D0 of primary-like data tracks vanishes.
+// Only the selection uses D0', Z0'; the stored track states are unchanged.
+SelectedTracks
+select_tracks_impactparameters_bs(const SelectedTracks& input,
+                                  float d0_upper_bound,
+                                  float z0_upper_bound,
+                                  float bsx,
+                                  float bsy,
+                                  float bsz)
+{
+    SelectedTracks selected;
+
+    for (size_t i = 0; i < input.tracks.size(); ++i) {
+
+        const auto& track = input.tracks[i];
+        const auto& state = input.trackStates[i];
+
+        const double cphi = std::cos(state.phi);
+        const double sphi = std::sin(state.phi);
+
+        const double s   = bsx * cphi + bsy * sphi;
+        const double d0p = state.D0 - bsx * sphi + bsy * cphi + 0.5 * state.omega * s * s;
+        const double z0p = state.Z0 - bsz + state.tanLambda * s;
+
+        if (std::abs(d0p) > d0_upper_bound) continue;
+        if (std::abs(z0p) > z0_upper_bound) continue;
+
+        selected.tracks.push_back(track);
+        selected.trackStates.push_back(state);
+    }
+
+    return selected;
+}
+
+
 
 // --------------------------------------
 // Event primary vertex reconstruction
