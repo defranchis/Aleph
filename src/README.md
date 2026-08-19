@@ -47,13 +47,14 @@ Output files will be in: `/eos/experiment/fcc/ee/analyses/case-studies/aleph/pro
 
 ### Primary-vertex options
 
-Opt-in flags for the primary-vertex (PV) track pre-selection, the beamspot constraint. All default to the current behaviour.
+Opt-in flags for the primary-vertex (PV) track pre-selection, the beamspot constraint and (data) the run list. All default to the current behaviour.
 
 | flag | default | meaning |
 | --- | --- | --- |
 | `--pvIPRefBS` | off | PV pre-selection `\|D0\|`/`\|Z0\|` measured w.r.t. the run beamspot instead of the origin (raw states are origin-referenced; matters in data only). Also moves the primary/secondary split feeding SV/V0. |
 | `--pvIPWindow D0MAX Z0MAX` | `0.75 2.0` | PV pre-selection `\|D0\|`, `\|Z0\|` upper bounds [cm], either reference. |
 | `--pvBSWidth SX SY SZ` | `200 100 2` | beamspot-constraint widths for BOTH PV fits (legacy chain and `--newPV`): `SX`, `SY` in um, `SZ` in cm. |
+| `--excludeRuns RUN [RUN ...]` | none | data only: veto these runs before any selection (`eventsProcessed` still counts the raw input). |
 
 ### The two-tier V0 module (`--newV0`)
 

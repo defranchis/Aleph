@@ -80,6 +80,8 @@ class Analysis():
         parser.add_argument('--pvIPWindow', nargs=2, default=[0.75, 2.0], type=float,
                             metavar=('D0MAX', 'Z0MAX'),
                             help='PV track pre-selection |D0|, |Z0| upper bounds [cm] (default 0.75 2.0).')
+        parser.add_argument('--excludeRuns', nargs='+', default=[], type=int, metavar='RUN',
+                            help='data only: veto these run numbers before any selection (eventsProcessed still counts the raw input).')
         parser.add_argument('--pvBSWidth', nargs=3, default=[200., 100., 2.], type=float,
                             metavar=('SX', 'SY', 'SZ'),
                             help='beamspot-constraint widths for BOTH PV fits: SX, SY [um], SZ [cm] (default 200 100 2).')
@@ -295,6 +297,9 @@ class Analysis():
         }
 
         if self.ana_args.doData:
+            if self.ana_args.excludeRuns:
+                veto = " && ".join(f"EventHeader.runNumber[0] != {r}" for r in sorted(set(self.ana_args.excludeRuns)))
+                df = df.Filter(veto, "excludeRuns")
             #df = df.Filter("AlephSelection::sel_class_filter(16)(ClassBitset)   || AlephSelection::sel_class_filter(17)(ClassBitset) ")
             df = df.Filter("AlephSelection::sel_class_filter(16)(ClassBitset) ")
             df = df.Define("jetPID", "-999")
