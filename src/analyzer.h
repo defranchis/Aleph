@@ -22,6 +22,7 @@
     df = df.Define("isMu", "FCCAnalyses::AlephSelection::get_isMu(JetConstituents)")
            .Define("n_muons_per_jet", "Sum(isMu)");
 */
+#include "dedx_valid.h"
 #include "edm4hep/ReconstructedParticleCollection.h"
 #include "edm4hep/EventHeaderCollection.h"
 #include <set>
@@ -692,9 +693,8 @@ struct build_constituents_dEdx_PIDhypo{
                          track_index < static_cast<int>(trackOmega.size()))
                             ? trackOmega[track_index]
                             : v; // unknown track: treat as invalid
-                    const bool valid =
-                        std::isfinite(v) && v > 0.f && v != omega_sentinel &&
-                        std::isfinite(dEdx.dQdx.error) && dEdx.dQdx.error > 0.f;
+                    const bool valid = FCCAnalyses::AlephDedx::dEdxValid(
+                        v, dEdx.dQdx.error, omega_sentinel);
 
                     if (valid) {
                       jet_dEdx.push_back(dEdx);

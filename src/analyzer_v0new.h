@@ -41,6 +41,7 @@
 #include <ROOT/RVec.hxx>
 #include "TVector3.h"
 
+#include "dedx_valid.h"
 #include "edm4hep/TrackState.h"
 #include "FCCAnalyses/VertexingUtils.h"
 #include "FCCAnalyses/VertexFitterSimple.h"
@@ -746,8 +747,7 @@ inline RVec<float> trackQuantityByIndex(const RVec<int>& want,
                meas_track_idx[j] < static_cast<int>(trackOmega.size()))
                   ? trackOmega[meas_track_idx[j]]
                   : g; // unknown track: treat as invalid
-          if (std::isfinite(g) && g > 0.f && g != omega_sentinel &&
-              std::isfinite(ge) && ge > 0.f)
+          if (AlephDedx::dEdxValid(g, ge, omega_sentinel))
             val = values[j];
           break;
         }
