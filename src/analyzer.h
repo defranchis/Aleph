@@ -635,6 +635,7 @@ struct build_constituents_dEdx_PIDhypo{
              const rv::RVec<edm4hep::RecDqdxData> &dEdxCollection,
              const rv::RVec<int> &_dEdxIndicesCollection, 
              const std::vector<std::vector<int>> &jet_indices,
+             const rv::RVec<float> &trackOmega,
              bool is_wires) const
     { 
         rv::RVec<rv::RVec<edm4hep::RecDqdxData>> dedx_constituents;
@@ -682,13 +683,23 @@ struct build_constituents_dEdx_PIDhypo{
                   if (track_index_to_dEdx.count(track_index)) {
                     const auto &dEdx = track_index_to_dEdx[track_index];
 
-                    //get the PID hypotheses p-values (= array of five entries fo e, mu, pi, K, p)
-                    const auto PID_pvals_array = all_hypotheses_pvalues(tlv_recoPart.P(), dEdx.dQdx.value, dEdx.dQdx.error, is_wires);
+                    // A failed leg stores the track's omega as its value
+                    // (verbatim copy); dQdx.type is the pad-leg status only,
+                    // so it is not consulted.
+                    const float v = dEdx.dQdx.value;
+                    const float omega_sentinel =
+                        (track_index >= 0 &&
+                         track_index < static_cast<int>(trackOmega.size()))
+                            ? trackOmega[track_index]
+                            : v; // unknown track: treat as invalid
+                    const bool valid =
+                        std::isfinite(v) && v > 0.f && v != omega_sentinel &&
+                        std::isfinite(dEdx.dQdx.error) && dEdx.dQdx.error > 0.f;
 
-                    //check wether the measurement is valid, if not fill default value
-                    if (dEdx.dQdx.type == 0) {
-                      jet_dEdx.push_back(track_index_to_dEdx[track_index]);
-                      jet_pid_array.push_back(PID_pvals_array);
+                    if (valid) {
+                      jet_dEdx.push_back(dEdx);
+                      jet_pid_array.push_back(all_hypotheses_pvalues(
+                          tlv_recoPart.P(), v, dEdx.dQdx.error, is_wires));
                     }
                     else {
                       jet_dEdx.push_back(dEdx_dummy_obj);
@@ -1016,10 +1027,8 @@ rv::RVec<T> reindexByRPLink(const rv::RVec<T> &coll,
   rv::RVec<T> out;
   out.reserve(rpTrackIndex.size());
   for (int idx : rpTrackIndex) {
-    // Valid only for collections parallel to Tracks (one entry per track, in
-    // track order). A relation entry pointing outside the collection means the
-    // input violates that; fail loudly rather than emit a default-constructed
-    // element that downstream size guards would accept as a real track.
+    // Out-of-range relation entry = corrupt input: fail loudly rather than
+    // emit a default element that downstream size guards would accept.
     if (idx < 0 || idx >= static_cast<int>(coll.size()))
       throw std::runtime_error(
           "reindexByRPLink: RP->Track relation entry out of range");

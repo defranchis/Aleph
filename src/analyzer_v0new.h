@@ -720,27 +720,35 @@ inline V0SVPointing candSVPointing(const VertexingUtils::FCCAnalysesV0& v0s,
   return out;
 }
 
-// Per-track measurement lookup: for each requested ORIGINAL track index,
-// return the first measurement whose track association matches. Sentinel -1
-// when there is no measurement, the index is -1, or the GATE value of that
-// measurement is exactly 0 — a dQdx.value==0 entry means "no measurement",
-// and passing it through produces an artificial stripe at 0 in every dE/dx
-// spectrum — hence the sentinel, never a fake 0. Pass the
-// dQdx.value array as `gate` for BOTH the value and the error lookup, so an
-// unmeasured track gets -1 in both branches consistently.
+// Per-track measurement lookup by ORIGINAL track index; sentinel -1 when
+// there is no measurement or it is invalid (gate == omega of the track =
+// the failed-leg sentinel, or non-finite/non-positive value or error).
+// gate/gateErr = dQdx.value/error for BOTH lookups; trackOmega = trackState
+// omega, parallel to Tracks.
 inline RVec<float> trackQuantityByIndex(const RVec<int>& want,
                                         const RVec<float>& values,
                                         const RVec<float>& gate,
-                                        const RVec<int>& meas_track_idx) {
+                                        const RVec<float>& gateErr,
+                                        const RVec<int>& meas_track_idx,
+                                        const RVec<float>& trackOmega) {
   RVec<float> out;
-  const size_t nm = std::min({values.size(), gate.size(),
+  const size_t nm = std::min({values.size(), gate.size(), gateErr.size(),
                               meas_track_idx.size()});
   for (int w : want) {
     float val = -1.f;
     if (w >= 0) {
       for (size_t j = 0; j < nm; ++j) {
         if (meas_track_idx[j] == w) {
-          if (gate[j] != 0.f) val = values[j];
+          const float g = gate[j];
+          const float ge = gateErr[j];
+          const float omega_sentinel =
+              (meas_track_idx[j] >= 0 &&
+               meas_track_idx[j] < static_cast<int>(trackOmega.size()))
+                  ? trackOmega[meas_track_idx[j]]
+                  : g; // unknown track: treat as invalid
+          if (std::isfinite(g) && g > 0.f && g != omega_sentinel &&
+              std::isfinite(ge) && ge > 0.f)
+            val = values[j];
           break;
         }
       }
