@@ -724,14 +724,14 @@ inline V0SVPointing candSVPointing(const VertexingUtils::FCCAnalysesV0& v0s,
 // Per-track measurement lookup by ORIGINAL track index; sentinel -1 when
 // there is no measurement or it is invalid (gate == omega of the track =
 // the failed-leg sentinel, or non-finite/non-positive value or error).
-// gate/gateErr = dQdx.value/error for BOTH lookups; trackOmega = trackState
-// omega, parallel to Tracks.
+// gate/gateErr = dQdx.value/error for BOTH lookups; trackStates = the
+// trackState collection, parallel to Tracks.
 inline RVec<float> trackQuantityByIndex(const RVec<int>& want,
                                         const RVec<float>& values,
                                         const RVec<float>& gate,
                                         const RVec<float>& gateErr,
                                         const RVec<int>& meas_track_idx,
-                                        const RVec<float>& trackOmega) {
+                                        const RVec<edm4hep::TrackState>& trackStates) {
   RVec<float> out;
   const size_t nm = std::min({values.size(), gate.size(), gateErr.size(),
                               meas_track_idx.size()});
@@ -744,8 +744,8 @@ inline RVec<float> trackQuantityByIndex(const RVec<int>& want,
           const float ge = gateErr[j];
           const float omega_sentinel =
               (meas_track_idx[j] >= 0 &&
-               meas_track_idx[j] < static_cast<int>(trackOmega.size()))
-                  ? trackOmega[meas_track_idx[j]]
+               meas_track_idx[j] < static_cast<int>(trackStates.size()))
+                  ? trackStates[meas_track_idx[j]].omega
                   : g; // unknown track: treat as invalid
           if (AlephDedx::dEdxValid(g, ge, omega_sentinel))
             val = values[j];

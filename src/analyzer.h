@@ -636,7 +636,7 @@ struct build_constituents_dEdx_PIDhypo{
              const rv::RVec<edm4hep::RecDqdxData> &dEdxCollection,
              const rv::RVec<int> &_dEdxIndicesCollection, 
              const std::vector<std::vector<int>> &jet_indices,
-             const rv::RVec<float> &trackOmega,
+             const rv::RVec<edm4hep::TrackState> &trackStates,
              bool is_wires) const
     { 
         rv::RVec<rv::RVec<edm4hep::RecDqdxData>> dedx_constituents;
@@ -690,8 +690,8 @@ struct build_constituents_dEdx_PIDhypo{
                     const float v = dEdx.dQdx.value;
                     const float omega_sentinel =
                         (track_index >= 0 &&
-                         track_index < static_cast<int>(trackOmega.size()))
-                            ? trackOmega[track_index]
+                         track_index < static_cast<int>(trackStates.size()))
+                            ? trackStates[track_index].omega
                             : v; // unknown track: treat as invalid
                     const bool valid = FCCAnalyses::AlephDedx::dEdxValid(
                         v, dEdx.dQdx.error, omega_sentinel);

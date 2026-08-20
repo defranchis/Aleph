@@ -736,9 +736,9 @@ class Analysis():
             for trk in ("trk1", "trk2"):
                 for det, dedx_coll in (("pads", "dEdxPads"), ("wires", "dEdxWires")):
                     df = df.Define(f"v0n_{trk}_dEdx_{det}_value",
-                                   f"FCCAnalyses::AlephV0New::trackQuantityByIndex(v0n_{trk}_origIdx, {dedx_coll}.dQdx.value, {dedx_coll}.dQdx.value, {dedx_coll}.dQdx.error, _{dedx_coll}_track.index, _Tracks_trackStates.omega)")
+                                   f"FCCAnalyses::AlephV0New::trackQuantityByIndex(v0n_{trk}_origIdx, {dedx_coll}.dQdx.value, {dedx_coll}.dQdx.value, {dedx_coll}.dQdx.error, _{dedx_coll}_track.index, _Tracks_trackStates)")
                     df = df.Define(f"v0n_{trk}_dEdx_{det}_error",
-                                   f"FCCAnalyses::AlephV0New::trackQuantityByIndex(v0n_{trk}_origIdx, {dedx_coll}.dQdx.error, {dedx_coll}.dQdx.value, {dedx_coll}.dQdx.error, _{dedx_coll}_track.index, _Tracks_trackStates.omega)")
+                                   f"FCCAnalyses::AlephV0New::trackQuantityByIndex(v0n_{trk}_origIdx, {dedx_coll}.dQdx.error, {dedx_coll}.dQdx.value, {dedx_coll}.dQdx.error, _{dedx_coll}_track.index, _Tracks_trackStates)")
             # fitted-vertex position (position-resolution studies)
             df = df.Define("v0n_vx",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 0)")
             df = df.Define("v0n_vy",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 1)")
@@ -970,7 +970,7 @@ class Analysis():
         # Get the dE/dx value and matching PID hypothesis pvalue from Bethe-Bloch fits for the jet constituents
 
         ## Pads
-        df = df.Define("jet_constituents_dEdx_PIDhypo_pads_result", "AlephSelection::build_constituents_dEdx_PIDhypo()(RecoParticles, _RecoParticles_tracks.index, dEdxPads, _dEdxPads_track.index, _jetc, _Tracks_trackStates.omega, false)" )
+        df = df.Define("jet_constituents_dEdx_PIDhypo_pads_result", "AlephSelection::build_constituents_dEdx_PIDhypo()(RecoParticles, _RecoParticles_tracks.index, dEdxPads, _dEdxPads_track.index, _jetc, _Tracks_trackStates, false)" )
         df = df.Define("jet_constituents_dEdx_pads_objs", "jet_constituents_dEdx_PIDhypo_pads_result.dedx_constituents")
         df = df.Define("pfcand_dEdx_pads_type", "AlephSelection::get_dEdx_type(jet_constituents_dEdx_pads_objs)")
         df = df.Define("pfcand_dEdx_pads_value", "AlephSelection::get_dEdx_value(jet_constituents_dEdx_pads_objs)")
@@ -985,7 +985,7 @@ class Analysis():
         df = df.Define("pfcand_PID_pval_pads_proton", "AlephSelection::get_PID_pvalue(jet_constituents_PID_pvals_pads, 4)")
 
         ## Wires
-        df = df.Define("jet_constituents_dEdx_PIDhypo_wires_result", "AlephSelection::build_constituents_dEdx_PIDhypo()(RecoParticles, _RecoParticles_tracks.index, dEdxWires, _dEdxWires_track.index, _jetc, _Tracks_trackStates.omega, true)" )
+        df = df.Define("jet_constituents_dEdx_PIDhypo_wires_result", "AlephSelection::build_constituents_dEdx_PIDhypo()(RecoParticles, _RecoParticles_tracks.index, dEdxWires, _dEdxWires_track.index, _jetc, _Tracks_trackStates, true)" )
         df = df.Define("jet_constituents_dEdx_wires_objs", "jet_constituents_dEdx_PIDhypo_wires_result.dedx_constituents")
         df = df.Define("pfcand_dEdx_wires_type", "AlephSelection::get_dEdx_type(jet_constituents_dEdx_wires_objs)")
         df = df.Define("pfcand_dEdx_wires_value", "AlephSelection::get_dEdx_value(jet_constituents_dEdx_wires_objs)")
