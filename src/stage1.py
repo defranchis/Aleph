@@ -421,6 +421,10 @@ class Analysis():
             # "converges" at/near the beam spot with no track information, so
             # both flags above can still read 1. int-typed.
             df = df.Define("pv_trivial",         "int(PVSelNew.trivial)")
+            # the three flags combined into the "usable PV" predicate, from the
+            # single named source in analyzer_pvnew.h. Stored only; the existing
+            # consumer ternaries keep their pv_converged-only policy.
+            df = df.Define("pv_good",            "int(FCCAnalyses::AlephPVNew::goodPV(PVSelNew))")
             # split from the pruning when it converged, else the
             # beamspot-as-fixed-PV fallback (never the unpruned return)
             df = df.Define("RecoedPrimaryTracks_looseBS", "FCCAnalyses::AlephPVNew::primaryTracksFromSel(trackstates_selected_for_vertexfit_flipped, PVSelNew, Beamspot_x*1e-3, Beamspot_y*1e-3, Beamspot_z*1e-3, {})".format(chi2max))
@@ -1123,8 +1127,9 @@ class Analysis():
             truth_branches += ["v0n_svnCosPoint", "v0n_svnPointSig", "v0n_svnIdx"]
             # (sec2origIdx lives in the always-written list — it is truth-free)
         if self.do_pvnew:
-            # the two-flag surface of the standalone PV fitter
-            truth_branches += ["pv_converged", "pv_split_converged", "pv_trivial"]
+            # the flag surface of the standalone PV fitter
+            truth_branches += ["pv_converged", "pv_split_converged", "pv_trivial",
+                               "pv_good"]
         if self.ana_args.phiKK:
             truth_branches += ["n_phikk_event"] + [
                 f"phikk_{b}" for b in (

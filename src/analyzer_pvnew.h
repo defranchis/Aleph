@@ -861,6 +861,13 @@ inline SmoothedTracks smooth_at_vertex(const RVec<edm4hep::TrackState>& tracks,
 // stage1 wiring glue: vertex object and primary-track split fallback.
 // ---------------------------------------------------------------------------
 
+// Single named source for "this PV is usable": the position fit converged,
+// every pruning pass converged, and the vertex is track-supported rather than
+// the beam-spot-only trivial case.
+inline bool goodPV(const PVSelResult& sel) {
+  return sel.fit.converged && sel.split_converged && !sel.trivial;
+}
+
 // PVSelResult -> FCCAnalysesVertex. Position is ALWAYS the fit's answer; the
 // covariance is zeroed when the fit did not converge. chi2 is stored as
 // chi2/ndf (the production VertexData convention).
