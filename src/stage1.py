@@ -42,8 +42,6 @@ class Analysis():
                             help='Legacy SV only: drop the standalone SV module (no svn_*/svm_* branches).')
         parser.add_argument('--oldPV', action='store_true',
                             help='Legacy PV chain: get_PrimaryTracks + VertexFitter_Tk and the origin-referenced track pre-selection, instead of the standalone fitter and its beamspot-referenced window (no pv_* flag branches).')
-        parser.add_argument('--v0nKsPointing', default=None, type=float,
-                            help='DEPRECATED/superseded by the two-tier module; using it is an error.')
         parser.add_argument('--v0nWideLamLoose', action='store_true',
                             help='TAIL-MEASUREMENT VARIANT: loose Lambda AP band ramp edges doubled (0.40/0.80; stored acceptance 0.8x that) to measure the band tail. Not for standard productions.')
         parser.add_argument('--v0nLamPointKsTiers', action='store_true',
@@ -622,11 +620,6 @@ class Analysis():
 
         ############################################# Standalone two-tier V0 module ###########################################
         if self.do_v0new:
-            if self.ana_args.v0nKsPointing is not None:
-                print("----> ERROR: --v0nKsPointing is superseded by the two-tier module: the loose "
-                      "tier now covers the offline scan range, and v0n_tight/candTight assume the "
-                      "adopted tight package. Using it is an error.")
-                exit()
             if self.ana_args.v0nLamPointKsTiers and self.ana_args.v0nWideLamLoose:
                 print("----> ERROR: --v0nLamPointKsTiers and --v0nWideLamLoose are separate "
                       "single-purpose variants; combining them is not supported.")
