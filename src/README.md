@@ -43,7 +43,10 @@ Output files will be in: `/eos/user/m/mdefranc/aleph_vertex/wp2_data/<version_ta
 
 `--year` and `--fraction` is also supported as an argument here. 
 
-
+### Run on batch:
+```
+fccanalysis submit stage1.py -- --tag VXX-XX --MCflavour X --batch --chunks X
+```
 
 ### Reconstruction modules: defaults and opt-outs
 
