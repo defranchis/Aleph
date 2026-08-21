@@ -28,7 +28,7 @@ fccanalysis run stage1.py -- --tag <version_tag>  --MCflavour <flavour_index>
 ```
 
 Output files will be in: 
-`/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedMC/<year>/<mc_type>/stage1/<version_tag>/<flavour_name>.root`. 
+`/eos/user/m/mdefranc/aleph_vertex/wp1_stage1/<version_tag>/<flavour_name>.root` (`--batch` writes to `/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedMC/<year>/<mc_type>/stage1/<version_tag>/` instead).
 
 Fraction of events to process can be set via `--fraction <val>`, default is to process all events. 
 
@@ -39,26 +39,52 @@ Fraction of events to process can be set via `--fraction <val>`, default is to p
 fccanalysis run stage1.py -- --tag <version_tag> --doData 
 ```
 
-Output files will be in: `/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedData/<year>/stage1/<version_tag>/`
+Output files will be in: `/eos/user/m/mdefranc/aleph_vertex/wp2_data/<version_tag>/` (`--batch` writes to `/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedData/<year>/stage1/<version_tag>/` instead).
 
 `--year` and `--fraction` is also supported as an argument here. 
 
 
 
-### Primary-vertex options
+### Reconstruction modules: defaults and opt-outs
 
-Opt-in flags for the primary-vertex (PV) track pre-selection, the beamspot constraint and (data) the run list. All default to the current behaviour.
+A flag-less `stage1.py` runs the standalone primary-vertex fitter ([`analyzer_pvnew.h`](analyzer_pvnew.h)), the two-tier V0 module ([`analyzer_v0new.h`](analyzer_v0new.h)) and the V0-first secondary-vertex module ([`analyzer_svnew.h`](analyzer_svnew.h)), writing the `pv_*`, `v0n_*`/`v0njet_*` and `svn_*`/`svm_*` branches. On MC the V0 truth-matching branches (`truev0_*`, `v0c_*`, `v0n_class`, ...) are added automatically; they are skipped under `--doData`.
+
+The legacy code paths remain available as opt-outs:
+
+| flag | meaning |
+| --- | --- |
+| `--oldPV` | legacy PV chain: `get_PrimaryTracks` + `VertexFitter_Tk`, and the origin-referenced track pre-selection instead of the beamspot-referenced one. No `pv_*` flag branches. |
+| `--oldSV` | drop the standalone SV module: no `svn_*`/`svm_*` branches. |
+| `--oldV0` | drop the two-tier V0 module: no `v0n_*`/`v0njet_*` and no V0 truth branches. Implies `--oldSV`, since the SV finder consumes the tight-V0 track veto. |
+
+### Primary-vertex options
 
 | flag | default | meaning |
 | --- | --- | --- |
-| `--pvIPRefBS` | off | PV pre-selection `\|D0\|`/`\|Z0\|` measured w.r.t. the run beamspot instead of the origin (raw states are origin-referenced; matters in data only). Also moves the primary/secondary split feeding SV/V0. |
-| `--pvIPWindow D0MAX Z0MAX` | `0.75 2.0` | PV pre-selection `\|D0\|`, `\|Z0\|` upper bounds [cm], either reference. |
-| `--pvBSWidth SX SY SZ` | `200 100 2` | beamspot-constraint widths for BOTH PV fits (legacy chain and `--newPV`): `SX`, `SY` in um, `SZ` in cm. |
+| `--pvchi2` | `5.0` | chi2max for track compatibility in the PV fit (lower = fewer tracks claimed primary = more secondaries). |
+| `--pvIPWindow D0MAX Z0MAX` | `0.75 2.0` | PV pre-selection `\|D0\|`, `\|Z0\|` upper bounds [cm]. |
+| `--pvBSWidth SX SY SZ` | `200 100 2` | beamspot-constraint widths for BOTH PV fits: `SX`, `SY` in um, `SZ` in cm. |
 | `--excludeRuns RUN [RUN ...]` | none | data only: veto these runs before any selection (`eventsProcessed` still counts the raw input). |
 
-### The two-tier V0 module (`--newV0`)
+### Secondary-vertex options
 
-Standalone V0 (Ks/Λ) reconstruction in [`analyzer_v0new.h`](analyzer_v0new.h), enabled with `--newV0`. It is *V0-first* by design: its track claims are meant to be consumed downstream (secondary-vertex finding runs on the unclaimed tracks), so the module optimises the correctness of each claim, not just the candidate list.
+The SV cut values live only in the `stage1.py` argparse defaults, which are the production values; [`analyzer_svnew.h`](analyzer_svnew.h) takes them all as explicit arguments.
+
+| flag | default | meaning |
+| --- | --- | --- |
+| `--svMaskMode` | `1` | V0-track masking: 0 none, 1 tight-claimed, 2 all claimed. |
+| `--svChi2` | `10` | normalised vertex chi2 cut (seed and growth). |
+| `--svDisLo` / `--svDisHi` | `0.03` / `3` | PV displacement window [cm]. |
+| `--svSigL` | `0.10` | longitudinal vertex sigma guard [cm]. |
+| `--svTrkChi2` | `5` | per-track chi2 contribution cap (<=0 off). |
+| `--svCosPoint` | `0.7` | minimum SV cosPointing. |
+| `--svMaxTrk` | `8` | maximum tracks per SV candidate. |
+| `--svGrowShift` | `0` | max fitted-vertex displacement per growth step [cm]; 0 = off. |
+| `--svClaimMode` | `0` | seed ordering: 0 best-chi2 first, 1 densest first, 2 grow-all-then-claim. |
+
+### The two-tier V0 module
+
+Standalone V0 (Ks/Λ) reconstruction in [`analyzer_v0new.h`](analyzer_v0new.h). It is *V0-first* by design: its track claims are meant to be consumed downstream (secondary-vertex finding runs on the unclaimed tracks), so the module optimises the correctness of each claim, not just the candidate list.
 
 **Candidate building.** All opposite-charge secondary track pairs are vertexed with a single consistent fit (`VertexFitter_Tk`); every downstream quantity (momenta, invariant masses under both hypotheses, Armenteros–Podolanski (AP) variables, pointing) is derived from the refitted momenta at that vertex — there is no second fit.
 

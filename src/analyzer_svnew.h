@@ -37,15 +37,9 @@ namespace AlephSVNew {
 
 using ROOT::VecOps::RVec;
 
-constexpr double SVN_CHI2_CUT   = 10.;   // normalised vertex chi2, seed pair and after growth
-constexpr double SVN_DIS_LO     = 0.03;  // cm — below: PV territory
-constexpr double SVN_DIS_HI     = 3.;    // cm — true b/c fd q90 = 0.76 cm; beyond ~3 cm it is V0/material/junk land
-constexpr double SVN_SIGL_MAX   = 0.15;  // cm — longitudinal vertex sigma guard (collinear degeneracy)
-constexpr int    SVN_MAX_TRACKS = 8;     // growth cap per candidate
-constexpr double SVN_TRK_CHI2   = 5.;    // per-track chi2 contribution cap (growth guard: global
-                                         // normalised chi2 alone dilutes as tracks are added)
-constexpr double SVN_COS_POINT  = 0.;    // SV momentum vs displacement (loose; scan offline)
-constexpr double SVN_MPI        = 0.13957039;
+// The cut values are caller-supplied with no defaults here: stage1.py's argparse
+// is the single source of the production values.
+constexpr double SVN_MPI = 0.13957039;
 
 // sigma along direction u from the edm4hep lower-triangular covMatrix
 // (xx, yx, yy, zx, zy, zz); fit runs in the cm-as-mm homothety, positions cm.
@@ -75,16 +69,16 @@ inline VertexingUtils::FCCAnalysesV0 findSVs(
     const VertexingUtils::FCCAnalysesVertex& PV,
     const VertexingUtils::FCCAnalysesV0& v0s,
     const RVec<int>& v0_tight,
-    int mask_mode = 1,
-    double solenoidBz = 1.5,
-    double chi2_cut = SVN_CHI2_CUT,
-    double dis_lo = SVN_DIS_LO, double dis_hi = SVN_DIS_HI,
-    double sigl_max = SVN_SIGL_MAX,
-    int max_tracks = SVN_MAX_TRACKS,
-    double trk_chi2 = SVN_TRK_CHI2,
-    double cos_point_min = SVN_COS_POINT,
-    int claim_mode = 0,
-    double grow_shift = 0.) {
+    int mask_mode,
+    double solenoidBz,
+    double chi2_cut,
+    double dis_lo, double dis_hi,
+    double sigl_max,
+    int max_tracks,
+    double trk_chi2,
+    double cos_point_min,
+    int claim_mode,
+    double grow_shift) {
 
   VertexingUtils::FCCAnalysesV0 result;
   const int nTr = np_tracks.size();

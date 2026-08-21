@@ -29,44 +29,40 @@ class Analysis():
                             help='Run tester file only for validation against Lukas ntuples.')
         parser.add_argument('--chunks', default=None, type=int,
                             help='Number of chunks per process/file')
-        parser.add_argument('--truthV0', action='store_true',
-                            help='MC only: add mother-anchored V0 truth-matching branches.')
         parser.add_argument('--nthreads', default=None, type=int,
                             help='Override the number of RDataFrame threads (for running several variants concurrently).')
         parser.add_argument('--procfile', default=None, type=str,
                             help='Process a single QQB input file (name without .root, e.g. ZM4212_40_AL) - for condor file-level splitting.')
-        parser.add_argument('--newV0', action='store_true',
-                            help='Run the standalone two-tier V0 module (v0n_* branches; truth classification added when combined with --truthV0 on MC).')
-        parser.add_argument('--newSV', action='store_true',
-                            help='PROTOTYPE (WP3): standalone SV module, V0-first (svn_* branches; requires --newV0). Also writes an unmasked control instance (svm_*).')
-        parser.add_argument('--newPV', action='store_true',
-                            help='PROTOTYPE: standalone PV fitter (analyzer_pvnew.h) replacing '
-                                 'get_PrimaryTracks + VertexFitter_Tk. Same pvchi2 semantics with the '
-                                 'clean pruning loop; adds pv_converged/pv_split_converged/pv_trivial flag branches '
-                                 'and the converged=false consumer policies (finder guards, old-SV skip, '
-                                 'jet-level beamspot fallback).')
+        # The standalone PV/SV/V0 modules are the DEFAULT chain; the --old*
+        # switches below restore the legacy code paths for cross-checks.
+        parser.add_argument('--oldV0', action='store_true',
+                            help='Legacy V0 only: drop the two-tier V0 module (no v0n_*/v0njet_* branches, no V0 truth branches). Implies --oldSV.')
+        parser.add_argument('--oldSV', action='store_true',
+                            help='Legacy SV only: drop the standalone SV module (no svn_*/svm_* branches).')
+        parser.add_argument('--oldPV', action='store_true',
+                            help='Legacy PV chain: get_PrimaryTracks + VertexFitter_Tk and the origin-referenced track pre-selection, instead of the standalone fitter and its beamspot-referenced window (no pv_* flag branches).')
         parser.add_argument('--svMaskMode', default=1, type=int,
-                            help='V0-track masking for --newSV: 0 none, 1 tight-claimed (default), 2 all claimed.')
+                            help='SV module: V0-track masking. 0 none, 1 tight-claimed, 2 all claimed.')
         parser.add_argument('--svChi2', default=10., type=float,
-                            help='--newSV: normalised vertex chi2 cut (seed + growth).')
-        parser.add_argument('--svSigL', default=0.5, type=float,
-                            help='--newSV: longitudinal vertex sigma guard [cm].')
+                            help='SV module: normalised vertex chi2 cut (seed + growth).')
+        parser.add_argument('--svSigL', default=0.10, type=float,
+                            help='SV module: longitudinal vertex sigma guard [cm].')
         parser.add_argument('--svDisLo', default=0.03, type=float,
-                            help='--newSV: displacement window low edge [cm].')
+                            help='SV module: displacement window low edge [cm].')
         parser.add_argument('--svDisHi', default=3., type=float,
-                            help='--newSV: displacement window high edge [cm].')
+                            help='SV module: displacement window high edge [cm].')
         parser.add_argument('--svTrkChi2', default=5., type=float,
-                            help='--newSV: per-track chi2 contribution cap (<=0 off).')
-        parser.add_argument('--svCosPoint', default=0., type=float,
-                            help='--newSV: minimum SV cosPointing.')
+                            help='SV module: per-track chi2 contribution cap (<=0 off).')
+        parser.add_argument('--svCosPoint', default=0.7, type=float,
+                            help='SV module: minimum SV cosPointing.')
         parser.add_argument('--svMaxTrk', default=8, type=int,
-                            help='--newSV: maximum tracks per SV candidate (growth cap).')
+                            help='SV module: maximum tracks per SV candidate (growth cap).')
         parser.add_argument('--svGrowShift', default=0., type=float,
-                            help='--newSV: max fitted-vertex displacement [cm] allowed per growth '
-                                 'step (position-stability guard against b->c dragging; 0 = off).')
+                            help='SV module: max fitted-vertex displacement [cm] allowed per growth '
+                                 'step (position-stability guard; 0 = off).')
         parser.add_argument('--svClaimMode', default=0, type=int,
-                            help='--newSV: seed ordering / claiming. 0 best-chi2 seed first '
-                                 '(prototype), 1 densest seed first, 2 two-phase grow-all-then-claim.')
+                            help='SV module: seed ordering / claiming. 0 best-chi2 seed first, '
+                                 '1 densest seed first, 2 two-phase grow-all-then-claim.')
         parser.add_argument('--v0nKsPointing', default=None, type=float,
                             help='DEPRECATED/superseded by the two-tier module; using it is an error.')
         parser.add_argument('--v0nWideLamLoose', action='store_true',
@@ -74,9 +70,7 @@ class Analysis():
         parser.add_argument('--v0nLamPointKsTiers', action='store_true',
                             help='SIZING VARIANT: tight-tier Lambda pointing aligned to the Ks p-tiers. Not for standard productions; candTight still encodes the adopted package.')
         parser.add_argument('--pvchi2', default=5.0, type=float,
-                            help='chi2max for PV track compatibility in get_PrimaryTracks (default 5.0 = validated baseline; lower = fewer tracks claimed primary = more secondaries).')
-        parser.add_argument('--pvIPRefBS', action='store_true',
-                            help='PV track pre-selection |D0|,|Z0| measured w.r.t. the run beamspot instead of the origin (data only matters; also moves the primary/secondary split).')
+                            help='PV fit: chi2max for track compatibility (lower = fewer tracks claimed primary = more secondaries).')
         parser.add_argument('--pvIPWindow', nargs=2, default=[0.75, 2.0], type=float,
                             metavar=('D0MAX', 'Z0MAX'),
                             help='PV track pre-selection |D0|, |Z0| upper bounds [cm] (default 0.75 2.0).')
@@ -88,7 +82,25 @@ class Analysis():
         # Parse additional arguments not known to the FCCAnalyses parsers
         # All command line arguments know to fccanalysis are provided in the
         # `cmdline_arg` dictionary.
-        self.ana_args, _ = parser.parse_known_args(cmdline_args['remaining'])
+        self.ana_args, unknown_args = parser.parse_known_args(cmdline_args['remaining'])
+
+        # The opt-in module flags were retired when the new chain became the default.
+        retired = {'--newV0', '--newSV', '--newPV', '--pvIPRefBS', '--truthV0'}.intersection(unknown_args)
+        if retired:
+            print("----> ERROR: retired flag(s) {}: the new PV/SV/V0 modules are the "
+                  "default. Opt out with --oldPV/--oldSV/--oldV0.".format(' '.join(sorted(retired))))
+            exit()
+
+        # Module switches: new PV/SV/V0 by default, --old* opts back out.
+        # The SV finder consumes the tight-V0 track veto, so --oldV0 forces --oldSV.
+        if self.ana_args.oldV0 and not self.ana_args.oldSV:
+            print("----> NOTE: --oldV0 implies --oldSV (the SV finder needs the tight-V0 veto).")
+            self.ana_args.oldSV = True
+        self.do_v0new = not self.ana_args.oldV0
+        self.do_svnew = not self.ana_args.oldSV
+        self.do_pvnew = not self.ana_args.oldPV
+        # V0 truth matching needs generator information: MC only.
+        self.do_truth = self.do_v0new and not self.ana_args.doData
 
         #Dictionary for setting output names:
         outnames_dict = {
@@ -154,19 +166,18 @@ class Analysis():
                     "1994" : {"fraction" : self.ana_args.fraction},
                 }
 
-                # /eos/experiment is read-only from the batch nodes: write the
-                # V0-module data output to the user EOS space instead
-                if self.ana_args.newV0:
-                    self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp2_data/{self.ana_args.tag}"
+                # /eos/experiment is read-only from the batch nodes: write to
+                # the user EOS space instead
+                self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp2_data/{self.ana_args.tag}"
 
-                    # file-level splitting for condor: one job = one data file
-                    if self.ana_args.procfile:
-                        self.process_list = {
-                            f"1994/{self.ana_args.procfile}": {
-                                "fraction": self.ana_args.fraction,
-                                "output": f"data_{self.ana_args.procfile}",
-                            },
-                        }
+                # file-level splitting for condor: one job = one data file
+                if self.ana_args.procfile:
+                    self.process_list = {
+                        f"1994/{self.ana_args.procfile}": {
+                            "fraction": self.ana_args.fraction,
+                            "output": f"data_{self.ana_args.procfile}",
+                        },
+                    }
 
                 self.n_threads = 32
 
@@ -233,19 +244,18 @@ class Analysis():
                             "QQB" : {"fraction" : self.ana_args.fraction, "output":output_name},
                         }
 
-                    # /eos/experiment is read-only from the batch nodes: write the
-                    # truth-matching output to the user EOS space instead
-                    if self.ana_args.truthV0:
-                        self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp1_stage1/{self.ana_args.tag}"
+                    # /eos/experiment is read-only from the batch nodes: write to
+                    # the user EOS space instead
+                    self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp1_stage1/{self.ana_args.tag}"
 
-                        # file-level splitting for condor: one job = one input file
-                        if self.ana_args.procfile:
-                            self.process_list = {
-                                f"QQB/{self.ana_args.procfile}": {
-                                    "fraction": self.ana_args.fraction,
-                                    "output": f"{output_name}_{self.ana_args.procfile}",
-                                },
-                            }
+                    # file-level splitting for condor: one job = one input file
+                    if self.ana_args.procfile:
+                        self.process_list = {
+                            f"QQB/{self.ana_args.procfile}": {
+                                "fraction": self.ana_args.fraction,
+                                "output": f"{output_name}_{self.ana_args.procfile}",
+                            },
+                        }
 
             
                 self.n_threads = 32 
@@ -258,24 +268,13 @@ class Analysis():
 
         # analyzer_truth.h is loaded unconditionally: its truth-FREE helpers
         # (selectedBaselineOriginalIndices / secondaryToOriginalTrack) back the
-        # always-written prim2origIdx / sec2origIdx index-map branches, on data
-        # too. The truth-classification branches remain gated by --truthV0.
+        # always-written prim2origIdx / sec2origIdx index-map branches, on data too.
         self.include_paths = ["analyzer.h", "analyzer_truth.h"]
-        if self.ana_args.truthV0:
-            if self.ana_args.doData:
-                print("----> ERROR: --truthV0 requires MC input.")
-                exit()
-        if self.ana_args.newV0:
-            # runs standalone on data (kinematic branches only); with --truthV0 on MC
-            # the truth-classification branches are added as well
+        if self.do_v0new:
             self.include_paths.append("analyzer_v0new.h")
-        if self.ana_args.newSV:
-            if not self.ana_args.newV0:
-                print("----> ERROR: --newSV requires --newV0 (V0-first design: the SV finder "
-                      "masks V0-claimed tracks).")
-                exit()
+        if self.do_svnew:
             self.include_paths.append("analyzer_svnew.h")
-        if self.ana_args.newPV:
+        if self.do_pvnew:
             self.include_paths.append("analyzer_pvnew.h")
 
         # #submit to batch if requested:
@@ -377,13 +376,12 @@ class Analysis():
         df = df.Define("tracks_selected_baseline","tracks_selected_baseline_result.tracks") 
         df = df.Define("trackstates_selected_baseline","tracks_selected_baseline_result.trackStates") 
 
-        # impose upper bounds on impact parameters to pre-select compatible tracks for the primary vertex fit 
-        # With --pvIPRefBS the bounds are applied to impact parameters re-referenced to the run
-        # beamspot instead of the origin (Beamspot_* are in 10um units -> cm); the raw track states
-        # are referenced to the origin, so in data the origin-referenced window is off-centre by the
-        # beamspot offset. No effect on MC, where the beamspot is at the origin.
+        # Upper bounds on the impact parameters, pre-selecting tracks for the primary vertex fit.
+        # Referenced to the run beamspot (Beamspot_* are in 10um units -> cm); the raw track states
+        # are referenced to the origin, so in data an origin-referenced window would be off-centre
+        # by the beamspot offset. No effect on MC, where the beamspot is at the origin.
         d0_ip_max, z0_ip_max = self.ana_args.pvIPWindow
-        if self.ana_args.pvIPRefBS:
+        if self.do_pvnew:
             df = df.Define("tracks_selected_for_vertexfit_result","AlephSelection::select_tracks_impactparameters_bs( tracks_selected_baseline_result, {}, {}, Beamspot_x*1e-3, Beamspot_y*1e-3, Beamspot_z*1e-3 )".format(d0_ip_max, z0_ip_max)) 
         else:
             df = df.Define("tracks_selected_for_vertexfit_result","AlephSelection::select_tracks_impactparameters( tracks_selected_baseline_result, {}, {} )".format(d0_ip_max, z0_ip_max)) 
@@ -410,7 +408,7 @@ class Analysis():
 
         chi2max = self.ana_args.pvchi2 # the maximum chi2 under which tracks are compatible with vertex fit (default 5.)
 
-        if self.ana_args.newPV:
+        if self.do_pvnew:
             # Standalone PV fitter (analyzer_pvnew.h): one fitter, one unit
             # convention (cm), explicit converged flags — the selection fit and
             # the final fit share the SAME beam-spot constraint by construction.
@@ -550,7 +548,7 @@ class Analysis():
             "0.8, "                                   # dR prefilter cut
             "false)"                                  # exclusive V0 rejection (skip+break), matching FCCAnalyses@3a4de97 isV0 - the code that produced ntuples-withks
         )
-        if self.ana_args.newPV:
+        if self.do_pvnew:
             # the old LCFIPlus finder FAILS OPEN under a garbage PV (its only
             # PV-dependent cut is an angle<0 rejection, so it emits plausible
             # 34cm-scale SVs) -> hard skip on the flag
@@ -629,8 +627,8 @@ class Analysis():
         df = df.Define("v0_dy",  "FCCAnalyses::AlephSelection::get_dy_SV_jets(v0_jets, PrimaryVertexP3)")
         df = df.Define("v0_dz",  "FCCAnalyses::AlephSelection::get_dz_SV_jets(v0_jets, PrimaryVertexP3)")
 
-        ############################################# V0 truth matching (--truthV0 only) #######################################
-        if self.ana_args.truthV0:
+        ############################################# V0 truth matching (MC only) #############################################
+        if self.do_truth:
             # many-to-many track<->MC maps from the (non-empty) trackMCLink ObjectIDs
             df = df.Define("mcToTracks",  f"FCCAnalyses::AlephTruth::buildMCToTracks({coll['GenParticles']}.size(), _trackMCLink_from, _trackMCLink_to)")
             df = df.Define("trackToMCs",  "FCCAnalyses::AlephTruth::buildTrackToMCs(Tracks.size(), _trackMCLink_from, _trackMCLink_to)")
@@ -680,8 +678,8 @@ class Analysis():
             df = df.Define("truev0_found_any",     "FCCAnalyses::AlephTruth::trueV0FoundAny(trueV0s, v0truth)")
             df = df.Define("truev0_found_correct", "FCCAnalyses::AlephTruth::trueV0FoundCorrect(trueV0s, v0truth, V0s_event)")
 
-        ############################################# Standalone two-tier V0 module (--newV0) ##################################
-        if self.ana_args.newV0:
+        ############################################# Standalone two-tier V0 module ###########################################
+        if self.do_v0new:
             if self.ana_args.v0nKsPointing is not None:
                 print("----> ERROR: --v0nKsPointing is superseded by the two-tier module: the loose "
                       "tier now covers the offline scan range, and v0n_tight/candTight assume the "
@@ -695,7 +693,7 @@ class Analysis():
                           else "findV0sWideLamLoose" if self.ana_args.v0nWideLamLoose
                           else "findV0s")
             v0n_expr = f"FCCAnalyses::AlephV0New::{v0n_finder}(SecondaryTracks_looseBS, VertexObject_looseBS, {BZ})"
-            if self.ana_args.newPV:
+            if self.do_pvnew:
                 # explicit empty-return entry guard on the flag (the window
                 # cuts would empty it anyway, a silent efficiency loss; the
                 # guard makes the failure explicit and empties pointSig too)
@@ -768,8 +766,8 @@ class Analysis():
             df = df.Define("v0njet_dx",  "FCCAnalyses::AlephSelection::get_dx_SV_jets(v0njet_jets, PrimaryVertexP3)")
             df = df.Define("v0njet_dy",  "FCCAnalyses::AlephSelection::get_dy_SV_jets(v0njet_jets, PrimaryVertexP3)")
             df = df.Define("v0njet_dz",  "FCCAnalyses::AlephSelection::get_dz_SV_jets(v0njet_jets, PrimaryVertexP3)")
-            # truth classification (MC with --truthV0 only; reco_ind is filled by the new module)
-            if self.ana_args.truthV0:
+            # truth classification (MC only; reco_ind is filled by the new module)
+            if self.do_truth:
                 df = df.Define("v0npairs",     "FCCAnalyses::AlephTruth::pairsFromRecoInd(V0sNew_event)")
                 df = df.Define("v0ntruth",     f"FCCAnalyses::AlephTruth::classifyV0s(V0sNew_event, v0npairs, SecondaryTracks_looseBS, sec2origIdx, trackToMCs, {coll['GenParticles']}, trueV0s)")
                 df = df.Define("v0n_class",       "v0ntruth.cls")
@@ -781,8 +779,8 @@ class Analysis():
                 df = df.Define("truev0_foundnew_any",     "FCCAnalyses::AlephTruth::trueV0FoundAny(trueV0s, v0ntruth)")
                 df = df.Define("truev0_foundnew_correct", "FCCAnalyses::AlephTruth::trueV0FoundCorrect(trueV0s, v0ntruth, V0sNew_event)")
 
-        ############################################# WP3 standalone SV module (--newSV, PROTOTYPE) ############################
-        if self.ana_args.newSV:
+        ############################################# Standalone SV module ####################################################
+        if self.do_svnew:
             # V0-first: svn_* = SV finding after masking V0-claimed tracks (svMaskMode);
             # svm_* = unmasked control twin from the SAME event, for the interplay study.
             sv_args = (f"{BZ}, {self.ana_args.svChi2}, {self.ana_args.svDisLo}, "
@@ -791,7 +789,7 @@ class Analysis():
                        f"{self.ana_args.svClaimMode}, {self.ana_args.svGrowShift}")
             for pfx, mode in (("svn", self.ana_args.svMaskMode), ("svm", 0)):
                 svn_expr = f"FCCAnalyses::AlephSVNew::findSVs(SecondaryTracks_looseBS, VertexObject_looseBS, V0sNew_event, v0n_tight, {mode}, {sv_args})"
-                if self.ana_args.newPV:
+                if self.do_pvnew:
                     # explicit entry guard (see V0sNew_event above)
                     svn_expr = ("pv_converged ? " + svn_expr +
                                 " : FCCAnalyses::VertexingUtils::FCCAnalysesV0{}")
@@ -1022,7 +1020,7 @@ class Analysis():
     def output(self):
 
         truth_branches = []
-        if self.ana_args.truthV0:
+        if self.do_truth:
             truth_branches = [
                 "truev0_pdg", "truev0_p", "truev0_costheta",
                 "truev0_px", "truev0_py", "truev0_pz",
@@ -1034,7 +1032,7 @@ class Analysis():
                 "v0c_pdg", "v0c_invM", "v0c_dxyz", "v0c_p", "v0c_cosPointing",
                 "v0c_vx", "v0c_vy", "v0c_vz",
             ]
-        if self.ana_args.newV0:
+        if self.do_v0new:
             truth_branches += [
                 "n_v0n_event", "v0n_pdg", "v0n_invM", "v0n_alpha", "v0n_qt",
                 "v0n_chi2", "v0n_dxyz", "v0n_p", "v0n_px", "v0n_py", "v0n_pz",
@@ -1056,13 +1054,13 @@ class Analysis():
                 "v0njet_cosPointing", "v0njet_correctedMass",
                 "v0njet_dx", "v0njet_dy", "v0njet_dz",
             ]
-            if self.ana_args.truthV0:
+            if self.do_truth:
                 truth_branches += [
                     "v0n_class", "v0n_trueidx", "v0n_pairmult", "v0n_trackshared",
                     "v0n_trk1", "v0n_trk2",
                     "truev0_foundnew_any", "truev0_foundnew_correct",
                 ]
-        if self.ana_args.newSV:
+        if self.do_svnew:
             for pfx in ("svn", "svm"):
                 truth_branches += [
                     f"n_{pfx}_event", f"{pfx}_mass", f"{pfx}_chi2", f"{pfx}_dxyz",
@@ -1076,7 +1074,7 @@ class Analysis():
             # V0 -> nearest-svn pointing feature
             truth_branches += ["v0n_svnCosPoint", "v0n_svnPointSig", "v0n_svnIdx"]
             # (sec2origIdx lives in the always-written list — it is truth-free)
-        if self.ana_args.newPV:
+        if self.do_pvnew:
             # the two-flag surface of the standalone PV fitter
             truth_branches += ["pv_converged", "pv_split_converged", "pv_trivial"]
 

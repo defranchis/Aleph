@@ -89,9 +89,6 @@ using ROOT::VecOps::RVec;
 
 // pT [GeV] = kPtPerTeslaCm * Bz [T] / |omega [1/cm]| (single source: aleph_units.h)
 constexpr double kPtPerTeslaCm = AlephUnits::kPtPerTeslaCm;
-// default per-track chi2 pruning threshold; mirrors the stage1 --pvchi2
-// production default
-constexpr double kDefaultPVChi2 = 5.0;
 using Vec3 = Eigen::Vector3d;
 using Mat3 = Eigen::Matrix3d;
 using Vec5 = Eigen::Matrix<double, 5, 1>;
@@ -814,7 +811,7 @@ inline PVFitResult fit_vertex_seeded(const RVec<edm4hep::TrackState>& tracks,
 // constraint as the final fit (identity by construction).
 inline PVSelResult select_primary_tracks(
     const RVec<edm4hep::TrackState>& tracks, const BeamSpot& bs,
-    double chi2_max = kDefaultPVChi2, const FitConfig& cfg = FitConfig(),
+    double chi2_max, const FitConfig& cfg = FitConfig(),
     int min_tracks = 2, bool force_first_removal = false) {
   const detail::TrackSet ts = detail::convert(tracks);
   return detail::select_core(ts, &bs, chi2_max, cfg, min_tracks,
@@ -1001,7 +998,7 @@ inline PVSelResult select_primary_tracks_raw(
     const RVec<double>& d0, const RVec<double>& phi, const RVec<double>& omega,
     const RVec<double>& z0, const RVec<double>& tanl,
     const RVec<double>& cov21_flat, const BeamSpot& bs,
-    double chi2_max = kDefaultPVChi2,
+    double chi2_max,
     const FitConfig& cfg = FitConfig(), int min_tracks = 2,
     bool force_first_removal = false) {
   detail::TrackSet ts;
