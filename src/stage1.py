@@ -46,6 +46,47 @@ class Analysis():
                             help='TAIL-MEASUREMENT VARIANT: loose Lambda AP band ramp edges doubled (0.40/0.80; stored acceptance 0.8x that) to measure the band tail. Not for standard productions.')
         parser.add_argument('--v0nLamPointKsTiers', action='store_true',
                             help='SIZING VARIANT: tight-tier Lambda pointing aligned to the Ks p-tiers. Not for standard productions; candTight still encodes the adopted package.')
+        parser.add_argument('--phiKK', action='store_true',
+                            help='Run the standalone phi(1020)->K+K- finder (phikk_* branches); '
+                                 'opt-in extension of the standalone V0 machinery. Pairs are formed '
+                                 'from the FULL selected track list; truth branches added on MC.')
+        parser.add_argument('--phiKKmLo', default=None, type=float,
+                            help='--phiKK: low edge of the STORED K+K- mass window [GeV]; default AlephPhiKK::M_LO.')
+        parser.add_argument('--phiKKmHi', default=None, type=float,
+                            help='--phiKK: high edge of the STORED K+K- mass window [GeV]; default AlephPhiKK::M_HI.')
+        parser.add_argument('--phiKKchi2', default=None, type=float,
+                            help='--phiKK: vertex-fit chi2 cut (ndf=1); loose sanity value, <=0 disables; '
+                                 'default AlephPhiKK::CHI2_CUT.')
+        parser.add_argument('--phiKKapBand', default=-1., type=float,
+                            help='--phiKK: |bandEll-1| Armenteros band cut; <=0 = off (default). '
+                                 'For equal-mass daughters the band is a reparametrisation of the mass window.')
+        parser.add_argument('--phiKKdpv', default=-1., type=float,
+                            help='--phiKK: PV-compatibility cut |vtx-PV| [cm]; <=0 = off (default). '
+                                 'Promptness is NOT required: phi from b/c decays are displaced.')
+        parser.add_argument('--phiKKdpvFid', default=None, type=float,
+                            help='--phiKK: |vtx-PV| storage fiducial [cm]; <=0 = off; default AlephPhiKK::DPV_FID. '
+                                 'Sanity bound only: near-collinear pairs give a vertex '
+                                 'unconstrained along the flight direction, so a real phi '
+                                 'can reach ~17 cm.')
+        parser.add_argument('--phiKKdpvSig', default=-1., type=float,
+                            help='--phiKK: PV-compatibility significance cut; <=0 = off (default).')
+        parser.add_argument('--phiKKsigd0', default=-1., type=float,
+                            help='--phiKK: per-track sigma(d0) cap [cm]; <=0 = off (default).')
+        parser.add_argument('--phiKKminHits', default=0, type=int,
+                            help='--phiKK: per-track minimum (nVDET + nITC) hits; 0 = off (default).')
+        parser.add_argument('--phiKKtrkChi2', default=-1., type=float,
+                            help='--phiKK: per-track fit chi2/ndf cap; <=0 = off (default).')
+        parser.add_argument('--phiKKpMin', default=None, type=float,
+                            help='--phiKK: per-track momentum floor [GeV]; <=0 = off; default AlephPhiKK::P_MIN_DEF. '
+                                 'Applied to the perigee momentum, while the stored trk p is the '
+                                 'at-vertex one (~1%% tail difference).')
+        parser.add_argument('--phiKKnoSameSign', action='store_true',
+                            help='--phiKK: do NOT reconstruct same-charge pairs (they are the '
+                                 'data-driven combinatorial control and are stored by default).')
+        parser.add_argument('--phiKKvetoV0', action='store_true',
+                            help='--phiKK: exclude tracks already claimed by a tight Ks/Lambda '
+                                 'candidate from the pairing (needs the V0 module, i.e. not --oldV0). '
+                                 'Off by default.')
         parser.add_argument('--excludeRuns', nargs='+', default=[], type=int, metavar='RUN',
                             help='data only: veto these run numbers before any selection (eventsProcessed still counts the raw input).')
         # Parse additional arguments not known to the FCCAnalyses parsers
@@ -230,6 +271,16 @@ class Analysis():
             self.include_paths.append("analyzer_v0new.h")
         if self.do_svnew:
             self.include_paths.append("analyzer_svnew.h")
+        if self.ana_args.phiKK:
+            if self.ana_args.phiKKvetoV0 and not self.do_v0new:
+                print("----> ERROR: --phiKKvetoV0 needs the V0 module (the veto list comes from "
+                      "the tight Ks/Lambda claims); it is incompatible with --oldV0.")
+                exit()
+            # analyzer_v0new.h carries trackQuantityByIndex, the shared dE/dx
+            # lookup; appended only when it is not already in the list
+            if "analyzer_v0new.h" not in self.include_paths:
+                self.include_paths.append("analyzer_v0new.h")
+            self.include_paths.append("analyzer_phikk.h")
 
         # #submit to batch if requested:
         # self.run_batch = self.ana_args.batch # no longer supported
@@ -754,6 +805,72 @@ class Analysis():
             df = df.Define("v0n_svnPointSig", "v0n_svnpoint.pointSig")
             df = df.Define("v0n_svnIdx",      "v0n_svnpoint.svIdx")
 
+        ############################################# phi(1020) -> K+K- module (--phiKK) ######################################
+        if self.ana_args.phiKK:
+            a = self.ana_args
+            # Pairs are formed from the FULL baseline-selected track list:
+            # primary and secondary tracks alike, no masking by the PV split
+            # or by other finders' claims (the Ks/Lambda veto is opt-in).
+            # selBaselineOrigIdx maps that collection to the original Tracks,
+            # which is how the per-track auxiliaries below are joined.
+            df = df.Define("phikk_nvdet_all", "FCCAnalyses::AlephPhiKK::subdetHits(selBaselineOrigIdx, Tracks.subdetectorHitNumbers_begin, Tracks.subdetectorHitNumbers_end, _Tracks_subdetectorHitNumbers, 0)")
+            df = df.Define("phikk_nitc_all",  "FCCAnalyses::AlephPhiKK::subdetHits(selBaselineOrigIdx, Tracks.subdetectorHitNumbers_begin, Tracks.subdetectorHitNumbers_end, _Tracks_subdetectorHitNumbers, 1)")
+            df = df.Define("phikk_chi2ndf_all", "FCCAnalyses::AlephPhiKK::trackChi2Ndf(selBaselineOrigIdx, Tracks.chi2, Tracks.ndf)")
+            df = df.Define("phikk_isprim_all",  "FCCAnalyses::AlephPhiKK::flagInSet(selBaselineOrigIdx, prim2origIdx)")
+            if a.phiKKvetoV0:
+                df = df.Define("phikk_veto_orig", "FCCAnalyses::AlephPhiKK::claimedOrigIdx(v0n_trk1_origIdx, v0n_trk2_origIdx, v0n_tight)")
+            else:
+                df = df.Define("phikk_veto_orig", "ROOT::VecOps::RVec<int>{}")
+            # unset knobs are passed by constant NAME so the header stays the single source
+            def knob(v, cname):
+                return f"FCCAnalyses::AlephPhiKK::{cname}" if v is None else str(v)
+            phikk_args = ", ".join([
+                str(BZ), knob(a.phiKKmLo, "M_LO"), knob(a.phiKKmHi, "M_HI"), knob(a.phiKKchi2, "CHI2_CUT"),
+                str(a.phiKKapBand), str(a.phiKKdpv), knob(a.phiKKdpvFid, "DPV_FID"),
+                str(a.phiKKdpvSig),
+                str(a.phiKKsigd0), str(a.phiKKminHits), str(a.phiKKtrkChi2),
+                knob(a.phiKKpMin, "P_MIN_DEF"),
+                "false" if a.phiKKnoSameSign else "true",
+                "FCCAnalyses::AlephPhiKK::PRE_MARGIN",
+                "phikk_veto_orig",
+            ])
+            df = df.Define("PhiKKCands_event",
+                           "FCCAnalyses::AlephPhiKK::findPhiKK(trackstates_selected_baseline_flipped, "
+                           "selBaselineOrigIdx, phikk_nvdet_all, phikk_nitc_all, phikk_chi2ndf_all, "
+                           f"phikk_isprim_all, VertexObject_looseBS, {phikk_args})")
+            df = df.Define("n_phikk_event", "int(PhiKKCands_event.invM.size())")
+            for _b in ("invM", "p", "px", "py", "pz", "alpha", "qt", "bandEll",
+                       "chi2", "vx", "vy", "vz", "dpv", "dpvSig", "same_sign",
+                       "wp", "tight"):
+                df = df.Define(f"phikk_{_b}", f"PhiKKCands_event.{_b}")
+            for _t in ("trk1", "trk2"):
+                for _b in ("origIdx", "q", "p", "costheta", "d0", "z0", "sigd0",
+                           "nvdet", "nitc", "chi2ndf", "isprim"):
+                    df = df.Define(f"phikk_{_t}_{_b}", f"PhiKKCands_event.{_t}_{_b}")
+                # daughter dE/dx: STORED for the calibration, never selected on.
+                # A failed leg copies the track omega into dQdx.value, so the
+                # shared dEdxValid gate gives -1 in both value and error.
+                for _det, _coll in (("pads", "dEdxPads"), ("wires", "dEdxWires")):
+                    df = df.Define(f"phikk_{_t}_dEdx_{_det}_value",
+                                   f"FCCAnalyses::AlephV0New::trackQuantityByIndex(phikk_{_t}_origIdx, {_coll}.dQdx.value, {_coll}.dQdx.value, {_coll}.dQdx.error, _{_coll}_track.index, _Tracks_trackStates)")
+                    df = df.Define(f"phikk_{_t}_dEdx_{_det}_error",
+                                   f"FCCAnalyses::AlephV0New::trackQuantityByIndex(phikk_{_t}_origIdx, {_coll}.dQdx.error, {_coll}.dQdx.value, {_coll}.dQdx.error, _{_coll}_track.index, _Tracks_trackStates)")
+            if self.do_truth:
+                df = df.Define("truePhis", f"FCCAnalyses::AlephPhiKK::findTruePhis({coll['GenParticles']}, mcToTracks)")
+                for _b in ("mothPdg", "origin", "p", "pt", "costheta",
+                           "px", "py", "pz", "vx", "vy", "vz", "nmatched"):
+                    df = df.Define(f"truephi_{_b}", f"truePhis.{_b}")
+                df = df.Define("truephi_dauPlus_p",  "truePhis.dauPlus_p")
+                df = df.Define("truephi_dauMinus_p", "truePhis.dauMinus_p")
+                df = df.Define("n_truephi_event",    "int(truePhis.idx.size())")
+                df = df.Define("phikktruth", f"FCCAnalyses::AlephPhiKK::classifyPhiKK(PhiKKCands_event, trackToMCs, {coll['GenParticles']}, truePhis)")
+                df = df.Define("phikk_class",        "phikktruth.cls")
+                df = df.Define("phikk_trueidx",      "phikktruth.truephi_idx")
+                for _t in ("trk1", "trk2"):
+                    df = df.Define(f"phikk_{_t}_mcpdg",   f"phikktruth.{_t}_mcpdg")
+                    df = df.Define(f"phikk_{_t}_mothpdg", f"phikktruth.{_t}_mothpdg")
+                df = df.Define("truephi_found", "FCCAnalyses::AlephPhiKK::truePhiFound(truePhis, phikktruth)")
+
         ############################################# Particle Flow Level Variables #######################################################
         df = df.Define("pfcand_isMu",     "AlephSelection::get_isType(jetConstitutentsTypes,2)")
         df = df.Define("pfcand_isEl",     "AlephSelection::get_isType(jetConstitutentsTypes,1)")
@@ -1008,6 +1125,29 @@ class Analysis():
         if self.do_pvnew:
             # the two-flag surface of the standalone PV fitter
             truth_branches += ["pv_converged", "pv_split_converged", "pv_trivial"]
+        if self.ana_args.phiKK:
+            truth_branches += ["n_phikk_event"] + [
+                f"phikk_{b}" for b in (
+                    "invM", "p", "px", "py", "pz", "alpha", "qt", "bandEll",
+                    "chi2", "vx", "vy", "vz", "dpv", "dpvSig", "same_sign",
+                    "wp", "tight")
+            ] + [
+                f"phikk_{t}_{b}" for t in ("trk1", "trk2")
+                for b in ("origIdx", "q", "p", "costheta", "d0", "z0", "sigd0",
+                          "nvdet", "nitc", "chi2ndf", "isprim",
+                          "dEdx_pads_value", "dEdx_pads_error",
+                          "dEdx_wires_value", "dEdx_wires_error")
+            ]
+            if self.do_truth:
+                truth_branches += ["n_truephi_event", "truephi_found"] + [
+                    f"truephi_{b}" for b in (
+                        "mothPdg", "origin", "p", "pt", "costheta",
+                        "px", "py", "pz", "vx", "vy", "vz", "nmatched",
+                        "dauPlus_p", "dauMinus_p")
+                ] + ["phikk_class", "phikk_trueidx"] + [
+                    f"phikk_{t}_{b}" for t in ("trk1", "trk2")
+                    for b in ("mcpdg", "mothpdg")
+                ]
 
         return truth_branches + [
             #DEBUG
