@@ -2,68 +2,15 @@
 #define ALEPHPVNEW_H
 
 /*
-  Standalone primary-vertex (PV) fitter.
-
-  Why this module exists (both defects of the inherited chain measured and
-  independently verified):
-   - The inherited Delphes VertexFit returns its 100th iterate on
-     non-convergence with no flag: a 33.9 cm "PV" at chi2/ndf = 3.7e5 flowed
-     unflagged into every consumer. Here every result carries an explicit
-     `converged` flag and a failure status; there is no silent last-iterate
-     code path.
-   - get_PrimaryTracks ran its selection fit with a beam-spot constraint
-     1000x looser than the final fit (a units switch defaulting differently
-     on the two paths). Here there is exactly ONE unit convention
-     (cm / rad / 1/cm) and ONE fitter entry point used both for the pruning
-     and for the final fit, so the two constraints are identical by
-     construction.
-
-  Numerics (mirrors the prototype exactly):
-   - Phase variable = transverse arc length L: Jacobians stay O(1) for every
-     curvature; sin(CL)/C through a series below |CL| < 1e-4.
-   - Every symmetric inverse via eigen-decomposition with a relative
-     eigenvalue floor (Eigen::SelfAdjointEigenSolver); the Newton step via
-     Cholesky (Eigen::LLT) with eigen-fallback. No recursive RegInv.
-   - Damped Gauss-Newton (Levenberg-Marquardt): a step is accepted only if
-     the total chi2 does not increase; convergence needs BOTH a small
-     Mahalanobis step and a small chi2 change (absolute + relative part —
-     the relative part is REQUIRED: the chi2 evaluation carries a noise
-     floor that scales with chi2, ordinarily ~1e-10 * chi2 but rising to
-     ~2e-8 * chi2 when a track's projected weight matrix is pinned at the
-     rcond eigenvalue floor; tol_dchi2_rel must sit above the worst case).
-   - A proposed step leaving the max_radius ball (default 100 cm) is a HARD
-     failure of that seed run (status diverged_radius) — a PV outside the
-     detector is not a candidate solution; the ball never fires on good fits
-     for any radius >= 10 cm, so a hard reject is free robustness and honest
-     about failure (a damped retry can instead "converge" to a wrong vertex
-     under stress).
-   - Deterministic seed ladder: user seed (optional) -> linear seed ->
-     beam-spot centre -> component-wise median of perigee points. First
-     converged seed wins.
-   - No float intermediates anywhere (a float conversion constant was one of
-     the ULP-chaos triggers of the old chain). edm4hep::TrackState members
-     are float by type; they are widened to double once, at input conversion.
-
-  Pruning (select_primary_tracks): the pvchi2 scheme with CLEAN loop
-  semantics: full-precision double argmax, EXACTLY ONE track removed per
-  pass, lowest-index tie-break (strict '>' scan), and NO unconditional first
-  removal. The reference loop unconditionally removes the max-chi2 track on
-  its first pass even when it is below threshold; that behaviour is
-  reproducible as force_first_removal=true for A/B only. Pruning REFUSES to
-  act on a non-converged fit: the result carries pv_split_converged so a
-  corrupted track split can never be silent.
-
-  One-shot post-convergence smoothing: after (and only after) a
-  converged fit, each track's parameters are updated to pass through the
-  fitted vertex (da = C A^T D r, the exact constrained-least-squares update)
-  and the momentum vector at the vertex is evaluated from the updated
-  parameters. This supplies the updated params/momenta the SV/V0 consumers
-  need, without the per-iteration re-linearisation feedback loop that
-  amplified the ULP chaos in the old fitter.
+  Standalone primary-vertex (PV) fitter: damped Gauss-Newton with an optional
+  Gaussian beam-spot constraint, a deterministic seed ladder, and iterative
+  pvchi2 track pruning through the same fitter entry point.
 
   Units: cm / rad / 1/cm everywhere. Inputs are ALEPH-flipped, cm-native
-  edm4hep track states (the flipD0_copy convention used by the other new
-  modules). Momentum: pT [GeV] = kPtPerTeslaCm * Bz[T] / |omega[1/cm]|.
+  edm4hep track states. Momentum: pT [GeV] = kPtPerTeslaCm * Bz[T] / |omega|.
+
+  Every result carries an explicit `converged` flag and a failure status; a
+  non-converged fit is never returned silently as a vertex.
 */
 
 #include <algorithm>
@@ -100,10 +47,8 @@ using Mat35 = Eigen::Matrix<double, 3, 5>;
 // ---------------------------------------------------------------------------
 
 struct BeamSpot {
-  // Gaussian luminous-region constraint, PHYSICAL cm. No unit switches.
-  // The width SOURCE is the caller (stage1's res_*_loose values, passed
-  // explicitly); these defaults exist for the offline validation harness
-  // and must mirror that source.
+  // Gaussian luminous-region constraint, PHYSICAL cm. Widths are normally
+  // supplied by the caller; these defaults serve the offline harness.
   double x = 0.0, y = 0.0, z = 0.0;
   double sigma_x = 0.02;   // 200 um
   double sigma_y = 0.01;   // 100 um
@@ -123,9 +68,7 @@ struct FitConfig {
   double tol_step = 1e-8;       // convergence: dx^T H dx (dimensionless)
   double tol_dchi2 = 1e-7;      // convergence: |chi2_new - chi2_old|, absolute
   double tol_dchi2_rel = 1e-7;  // ... plus this times the current chi2; must sit
-                                // above the chi2-evaluation noise floor, which a
-                                // track pinned at the rcond eigenvalue floor can
-                                // inflate to ~2e-8 * chi2
+                                // above the chi2-evaluation noise floor
   double lm_lambda0 = 1e-6;     // initial Levenberg-Marquardt damping
   double lm_up = 10.0;          // damping increase on a rejected step
   double lm_down = 0.1;         // damping decrease on an accepted step
@@ -181,8 +124,7 @@ inline const char* seed_name(int s) {
 
 struct PVFitResult {
   // ALWAYS fully populated. converged == false means the numbers are a best
-  // effort and MUST NOT be used as a vertex; there is no silent last-iterate
-  // return anywhere in this module.
+  // effort and MUST NOT be used as a vertex.
   std::array<double, 3> position{{std::numeric_limits<double>::quiet_NaN(),
                                   std::numeric_limits<double>::quiet_NaN(),
                                   std::numeric_limits<double>::quiet_NaN()}};
@@ -223,13 +165,11 @@ struct PVSelResult {
   // Result of the iterative pvchi2 pruning.
   RVec<int> kept;           // indices (into the input track list) kept primary
   PVFitResult fit;          // the fit of the final kept set
-  bool split_converged = false;  // EVERY pruning pass converged (flag #2 of
-                                 // the two-flag policy; fit.converged is #1)
-  bool trivial = false;  // fewer than min_tracks tracks entered the fit: with
-                         // a beam spot the fit "converges" at/near the beam
-                         // spot with no event information. Both converged
-                         // flags may still be true; consumers needing a
-                         // track-supported vertex must check this flag.
+  bool split_converged = false;  // EVERY pruning pass converged (fit.converged
+                                 // covers only the final fit)
+  bool trivial = false;  // fewer than min_tracks tracks entered the fit, so the
+                         // vertex carries no event information even when both
+                         // converged flags are true; check before using it.
   int n_passes = 0;
 };
 
@@ -345,8 +285,7 @@ inline Mat35 helix_dXdpar(const Vec5& p, double L) {
   A(1, 0) = cp;
   A(0, 1) = -D * cp - f * sa;
   A(1, 1) = -D * sp + f * ca;
-  // d/dC at fixed L: z does not depend on C — the reason the L
-  // parametrisation is better conditioned than the s = 2CL one
+  // d/dC at fixed L: z does not depend on C
   A(0, 2) = dfdC * ca - f * L * sa;
   A(1, 2) = dfdC * sa + f * L * ca;
   A(2, 3) = 1.0;
@@ -362,9 +301,8 @@ inline Mat35 helix_dXdpar(const Vec5& p, double L) {
 // floor. Deterministic: no pivoting, no recursion, no branch on exact zeros.
 inline Mat3 reg_inv(const Mat3& M_in, double rcond, double& cond, bool& ok) {
   Mat3 M = 0.5 * (M_in + M_in.transpose());
-  // NOTE: the iterative QR solver, NOT computeDirect() — the analytic 3x3
-  // path loses precision on the ill-conditioned per-track weight matrices
-  // (condition numbers up to ~1e12) and measurably changes the pruning.
+  // Iterative QR solver, NOT computeDirect(): the analytic 3x3 path loses
+  // precision on the ill-conditioned per-track weight matrices.
   Eigen::SelfAdjointEigenSolver<Mat3> es(M);
   if (es.info() != Eigen::Success) {
     cond = std::numeric_limits<double>::infinity();
@@ -403,7 +341,7 @@ inline Vec3 cholesky_solve(const Mat3& H, const Vec3& g, double rcond) {
 }
 
 // -------------------------------------------------------------------------
-// chi2 machinery (mirrors pvfit_proto._track_terms / _chi2_total)
+// chi2 machinery
 // -------------------------------------------------------------------------
 
 struct TrackTerms {
@@ -569,8 +507,7 @@ inline RunResult run_from_seed(const TrackSet& ts, const BeamSpot* bs,
       const Vec3 xn = x + dx;
       if (xn.norm() > cfg.max_radius) {
         // HARD reject: a PV outside the containment ball is not a candidate
-        // solution — fail this seed run honestly instead of re-damping (a
-        // damped retry can silently "converge" to a wrong vertex under stress).
+        // solution — fail this seed run instead of re-damping.
         status = kDivergedRadius;
         break;
       }
@@ -591,9 +528,8 @@ inline RunResult run_from_seed(const TrackSet& ts, const BeamSpot* bs,
         if (dstep < cfg.tol_step && dchi2 < tolc) status = kOk;
         break;
       }
-      // A REJECTED step that is already negligible in both the parameter
-      // metric and the chi2 means we are sitting at the minimum and only
-      // round-off is left: that is convergence, not a stall.
+      // A rejected step negligible in both the parameter metric and the chi2
+      // means only round-off is left: convergence, not a stall.
       if (std::isfinite(c2n) && dstep < cfg.tol_step && dchi2 < tolc) {
         status = kOk;
         break;
@@ -746,9 +682,8 @@ inline PVSelResult select_core(const TrackSet& ts, const BeamSpot* bs,
     PVFitResult res = fit_core(sub, bs, nullptr, cfg);
     ++out.n_passes;
     if (!res.converged) {
-      // REFUSE to prune on a non-converged fit: the split up to here is
-      // returned, flagged. (Policy: the caller falls back to a
-      // beamspot-as-fixed-PV classification, never an unpruned return.)
+      // Refuse to prune on a non-converged fit: return the split so far,
+      // flagged via split_converged = false.
       out.kept.assign(keep.begin(), keep.end());
       out.fit = res;
       out.split_converged = false;
@@ -764,8 +699,8 @@ inline PVSelResult select_core(const TrackSet& ts, const BeamSpot* bs,
         imax = static_cast<int>(i);
       }
     }
-    // The reference loop's unconditional first removal is
-    // reproducible for A/B only; the clean default tests the threshold first.
+    // force_first_removal reproduces the reference loop's unconditional first
+    // removal; the default tests the threshold first.
     const bool forced = first_pass && force_first_removal;
     first_pass = false;
     if (imax < 0 || (!forced && !(cmax >= chi2_max)) ||
@@ -831,8 +766,9 @@ inline RVec<double> track_chi2_vs_point(const RVec<edm4hep::TrackState>& tracks,
   return RVec<double>(tt.chi2.begin(), tt.chi2.end());
 }
 
-// One-shot post-convergence smoothing: updated track parameters
-// and momenta at the fitted vertex. Refuses on a non-converged fit.
+// One-shot post-convergence smoothing: updated track parameters (D, phi0, C,
+// z0, ct) and momenta [GeV] at the fitted vertex. Refuses on a non-converged
+// fit (returns valid = false).
 inline SmoothedTracks smooth_at_vertex(const RVec<edm4hep::TrackState>& tracks,
                                        const PVFitResult& res,
                                        double solenoidBz = 1.5,
@@ -848,12 +784,9 @@ inline SmoothedTracks smooth_at_vertex(const RVec<edm4hep::TrackState>& tracks,
   out.momentum.reserve(N);
   out.phase.reserve(N);
   for (size_t i = 0; i < N; ++i) {
-    // Constrained least squares: min (p - par)^T C^-1 (p - par) subject to
-    // the helix at p passing through the fitted vertex x. Solved by iterated
-    // linearised projection (the constraint is nonlinear in p, so the single
-    // first-order update leaves an O(da^2) miss of tens of um on
-    // high-residual tracks; three re-linearisations take it to round-off).
-    // Still one-shot w.r.t. the fitter: the vertex is never touched.
+    // Constrained least squares: min (p - par)^T C^-1 (p - par) subject to the
+    // helix at p passing through the fitted vertex x, by iterated linearised
+    // projection. The vertex itself is never touched.
     Vec5 pnew = ts.par[i];
     double L2 = res.track_phase[i];
     for (int it = 0; it < 3; ++it) {
@@ -907,20 +840,12 @@ inline SmoothedTracks smooth_at_vertex(const RVec<edm4hep::TrackState>& tracks,
 }
 
 // ---------------------------------------------------------------------------
-// stage1 wiring glue (--newPV): the converged=false consumer policies.
-// The finder entry guards, the old-SV-finder hard skip and the jet-level
-// beamspot substitution live in stage1 Define ternaries on the pv_converged
-// flag (an emptied candidate list also covers the pointing-significance
-// sentinel). These two helpers carry the split fallback and the vertex
-// object (position always written as the diagnostic, covariance zeroed on
-// failure).
+// stage1 wiring glue: vertex object and primary-track split fallback.
 // ---------------------------------------------------------------------------
 
-// PVSelResult -> the FCCAnalysesVertex shape every downstream consumer takes.
-// The position is ALWAYS the fit's answer (a garbage position is the
-// diagnostic); the covariance is zeroed when the fit did not converge, so
-// nothing can propagate a garbage error ellipse. chi2 is stored as chi2/ndf
-// (the production VertexData convention).
+// PVSelResult -> FCCAnalysesVertex. Position is ALWAYS the fit's answer; the
+// covariance is zeroed when the fit did not converge. chi2 is stored as
+// chi2/ndf (the production VertexData convention).
 inline VertexingUtils::FCCAnalysesVertex toFCCVertex(const PVSelResult& sel) {
   VertexingUtils::FCCAnalysesVertex out;
   edm4hep::VertexData vd;
@@ -944,11 +869,9 @@ inline VertexingUtils::FCCAnalysesVertex toFCCVertex(const PVSelResult& sel) {
   return out;
 }
 
-// The primary-track split. On a fully converged pruning: the kept set.
-// On a non-converged pruning pass: NEVER the unpruned return (the silent
-// failure mode of the old chain) — fall back to classifying every track
-// against the beam spot as a FIXED point with the same chi2 threshold.
-// The <2-track guard mirrors the reference wrapper (empty primaries).
+// The primary-track split: the kept set on a fully converged pruning, else
+// every track classified against the beam spot as a FIXED point with the same
+// chi2 threshold. Fewer than 2 input tracks returns empty.
 inline RVec<edm4hep::TrackState> primaryTracksFromSel(
     const RVec<edm4hep::TrackState>& tracks, const PVSelResult& sel,
     double bx, double by, double bz, double chi2_max,
@@ -970,8 +893,8 @@ inline RVec<edm4hep::TrackState> primaryTracksFromSel(
 }
 
 // ---------------------------------------------------------------------------
-// raw-double interface (validation harness): bypasses the float track-state
-// members so the offline gates run at full double fidelity vs the prototype
+// raw-double interface: bypasses the float edm4hep track-state members so the
+// offline gates run at full double fidelity.
 // ---------------------------------------------------------------------------
 
 inline PVFitResult fit_vertex_raw(const RVec<double>& d0,

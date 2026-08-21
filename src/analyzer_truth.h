@@ -3,15 +3,9 @@
 
 /*
   Truth-matching utilities for V0 and secondary-vertex studies.
-
-  The podio parent/daughter links in the ALEPH EDM4HEP files are present but
-  empty, so the decay graph is recovered GEOMETRICALLY: Geant daughters are
-  generatorStatus==0 secondaries whose production vertex equals the mother's
-  endpoint (tol 1e-4). MC positions in these files are in CM (non-standard).
-  Track<->MC matching uses the trackMCLink ObjectID pairs, kept many-to-many
-  (the old genToTrackMapping was last-writer-wins).
-
-  All functions live in FCCAnalyses::AlephTruth and are RDataFrame-friendly.
+  Decay graphs are recovered geometrically (the podio parent/daughter links are
+  empty): daughters are trackable MC particles produced at the mother endpoint
+  within tol. MC positions are in CM, not mm.
 */
 
 #include <cmath>
@@ -35,11 +29,9 @@ namespace AlephTruth {
 
 using ROOT::VecOps::RVec;
 
-// ---------------------------------------------------------------------------
-// Many-to-many track<->MC maps from the trackMCLink collection.
-// Link convention (as in analyzer_recotomctools.cxx): _trackMCLink_from points
-// at the track (index into Tracks), _trackMCLink_to at the MC particle.
-// ---------------------------------------------------------------------------
+// Many-to-many track<->MC maps from the trackMCLink collection. Link
+// convention: _trackMCLink_from indexes Tracks, _trackMCLink_to indexes
+// MCParticles.
 
 inline RVec<RVec<int>> buildMCToTracks(size_t n_mc,
                                        const RVec<podio::ObjectID>& link_from,
@@ -71,9 +63,7 @@ inline RVec<RVec<int>> buildTrackToMCs(size_t n_tracks,
   return out;
 }
 
-// ---------------------------------------------------------------------------
 // Mother-anchored true V0 finding (Ks -> pi+pi-, Lambda -> p pi).
-// ---------------------------------------------------------------------------
 
 struct TrueV0s {
   RVec<int>   pdg;        // signed: 310, +-3122
@@ -82,12 +72,12 @@ struct TrueV0s {
   RVec<int>   dau2;
   RVec<float> p;          // mother |p| [GeV]
   RVec<float> costheta;   // mother pz/|p|
-  RVec<float> px;         // mother momentum components [GeV] (enables offline jet assignment)
+  RVec<float> px;         // mother momentum components [GeV]
   RVec<float> py;
   RVec<float> pz;
   RVec<float> fd;         // flight distance |endpoint - vertex| of mother [cm]
   RVec<float> dpv;        // decay point distance from gen PV (MCParticles[0].vertex) [cm]
-  RVec<float> vx;         // decay point components [cm] (position-resolution studies)
+  RVec<float> vx;         // decay point components [cm]
   RVec<float> vy;
   RVec<float> vz;
   RVec<int>   nmatched;   // # daughters with >=1 linked track (0/1/2)
@@ -193,10 +183,8 @@ inline TrueV0s findTrueV0s(const RVec<edm4hep::MCParticleData>& mc,
   return out;
 }
 
-// ---------------------------------------------------------------------------
 // Index recovery: V0 candidates hold reco_ind into SecondaryTracks_looseBS;
 // map those entries back to original Tracks indices.
-// ---------------------------------------------------------------------------
 
 // Mirror of AlephSelection::select_tracks_baseline returning, for each
 // selected entry (same order), the ORIGINAL index in the Tracks collection.
@@ -243,18 +231,9 @@ inline RVec<int> secondaryToOriginalTrack(
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Pair-index recovery for V0 candidates.
-// The compiled get_V0s does NOT expose which track pair each candidate came
-// from (get_V0candidate never passes the "alltracks" collection to the fitter,
-// so FCCAnalysesVertex.reco_ind is empty). We therefore replicate its booking
-// loop exactly - same public get_V0candidate, same windows, same exclusivity
-// bookkeeping - which on identical inputs in the same process reproduces the
-// candidate list deterministically. The caller MUST cross-check pdg/invM
-// against the compiled result (classifyV0s throws on any mismatch).
-// Windows below == AlephSelection::get_V0s_ALEPH(..., loose_mass_window=true,
-// dR_pair_cut=-1, exclusive_tracks=true) as called by stage1.
-// ---------------------------------------------------------------------------
+// Pair-index recovery for V0 candidates: the compiled get_V0s leaves
+// FCCAnalysesVertex.reco_ind empty, so replicate its booking loop (same
+// windows and exclusivity). classifyV0s throws on any pdg/invM mismatch.
 
 struct V0Pairs {
   RVec<int>    i1, i2;   // indices into the secondaries collection, booking order
@@ -310,9 +289,8 @@ inline V0Pairs rerunV0Pairing(const RVec<edm4hep::TrackState>& np_tracks,
   return out;
 }
 
-// Per true V0: how many of its daughters have >=1 linked track that survives
-// into the secondary-track set (0-2). Separates "lost to the PV claim /
-// track selection" from "lost by the V0 finder".
+// Per true V0: how many of its daughters (0-2) have >=1 linked track that
+// survives into the secondary-track set.
 inline RVec<int> daughtersInSecondaries(const TrueV0s& tv,
                                         const RVec<RVec<int>>& mcToTracks,
                                         const RVec<int>& sec2orig) {
@@ -345,9 +323,7 @@ inline V0Pairs pairsFromRecoInd(const VertexingUtils::FCCAnalysesV0& v0s) {
   return out;
 }
 
-// ---------------------------------------------------------------------------
 // Truth classification of reco V0 candidates (event-level V0s_event order).
-// ---------------------------------------------------------------------------
 
 struct V0TruthInfo {
   RVec<int>   cls;          // 0 combinatorial, 1 true Ks, 2 true Lambda,
@@ -444,10 +420,9 @@ inline V0TruthInfo classifyV0s(const VertexingUtils::FCCAnalysesV0& v0s,
       }
     }
 
-    // Armenteros-Podolanski from updated momenta at the fitted vertex
-    // (momentum order follows the fitted pair order i1,i2). SecondaryTracks
-    // are flipD0_copy'ed (raw ALEPH omega carries -charge), so physical
-    // charge = +sign(omega).
+    // Armenteros-Podolanski from updated momenta at the fitted vertex, in
+    // fitted pair order (i1,i2). SecondaryTracks are flipD0_copy'ed (raw ALEPH
+    // omega carries -charge), so physical charge = +sign(omega).
     float alpha = -99., qt = -99.;
     const auto& upd = v0s.vtx[c].updated_track_momentum_at_vertex;
     if (upd.size() == 2) {
@@ -510,11 +485,7 @@ inline RVec<float> candDxyz(const VertexingUtils::FCCAnalysesV0& v0s,
   return out;
 }
 
-// Fitted-vertex position components, one accessor per axis (position-
-// resolution studies; works for old and new finder collections alike).
-// Units: both collections store positions numerically in cm (verified — the
-// old chain's mixed-unit defect is in its second fit's momenta/covariance,
-// not the vertex position).
+// Fitted-vertex position component, axis 0/1/2 = x/y/z, in cm.
 inline RVec<float> candVtxPos(const VertexingUtils::FCCAnalysesV0& v0s, int axis) {
   RVec<float> out;
   for (const auto& v : v0s.vtx) out.push_back(v.vertex.position[axis]);
@@ -538,8 +509,7 @@ inline RVec<float> candP(const VertexingUtils::FCCAnalysesV0& v0s) {
 }
 
 // Component comp (0/1/2 = x/y/z) of the SAME summed vertex momentum whose
-// magnitude candP returns, so sqrt(px^2+py^2+pz^2) reproduces candP by
-// construction (no second estimate of the candidate momentum).
+// magnitude candP returns, so sqrt(px^2+py^2+pz^2) reproduces candP exactly.
 inline RVec<float> candPcomp(const VertexingUtils::FCCAnalysesV0& v0s, int comp) {
   RVec<float> out;
   for (const auto& v : v0s.vtx) {

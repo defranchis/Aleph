@@ -183,10 +183,8 @@ class Analysis():
 
         else:
             self.input_dir = f"/eos/experiment/aleph/EDM4HEP/MC/{self.ana_args.year}/"
-            # Optional local re-clustered input copy (raw files have ~3 TTree
-            # clusters, capping RDataFrame at ~3-4 threads; a re-clustered copy
-            # lifts the cap — same mechanism as the validation tester below).
-            # Opt-in via env var so production paths are untouched by default.
+            # Optional local re-clustered input copy: the raw files have ~3 TTree
+            # clusters, which caps RDataFrame at ~3-4 threads. Opt-in via env var.
             import os
             _reclus = os.environ.get("ALEPH_RECLUS_DIR")
             if _reclus and os.path.isdir(_reclus):
@@ -220,16 +218,12 @@ class Analysis():
                 #local tester for validation
                 if self.ana_args.valid:
 
-                    # local tester: write to node-local disk (/eos/experiment is
-                    # read-only from the batch nodes) and process ZM4212_40_AL,
-                    # the file holding the events that differ against the
-                    # reference ntuple output_qqb_1 (2584, 2993, 4282, 5450,
-                    # 2463, ...)
+                    # local tester: node-local disk (/eos/experiment is read-only
+                    # from the batch nodes), single input file
                     self.output_dir = f"/tmp/aleph_valid_runs/{self.ana_args.tag}"
 
-                    # re-clustered input copy (30 TTree clusters instead of 3): lifts the
-                    # RDataFrame thread cap from 3 to ~30 cores; verified byte-identical
-                    # output.
+                    # re-clustered input copy (30 TTree clusters instead of 3):
+                    # lifts the RDataFrame thread cap from 3 to ~30 cores
                     import os
                     if os.path.isdir("/tmp/reclus_input/QQB"):
                         self.input_dir = "/tmp/reclus_input/"
@@ -340,15 +334,10 @@ class Analysis():
         df = df.Define("event_invariant_mass", "JetConstituentsUtils::InvariantMass(jet_p4[0], jet_p4[1])")
 
 
-        # Beamspot POSITION (the constraint widths set below are its size; this is its centre).
-        # In simulation the beamspot is at the origin by construction. In data it is offset by
-        # ~0.6 mm in x and ~0.2 mm in y, i.e. 2-3x the transverse widths used as the constraint,
-        # so leaving it at 0 would bias the fit. Values are per-run, in the same 10um units as
-        # the widths (see AlephSelection::get_beamspot in analyzer.h).
-        # The json path is passed explicitly and lives on EOS: resolving it relative to the header
-        # would break on condor, where analyzer.h is copied to the worker node and AFS may not be
-        # readable. A copy is kept in the repo at Aleph/data/ as the version-controlled reference -
-        # keep the two in sync. Override at runtime with $ALEPH_BEAMSPOT_JSON if needed.
+        # Beamspot CENTRE, per run, in 10um units (see AlephSelection::get_beamspot).
+        # At the origin in simulation, offset by ~0.6/0.2 mm in x/y in data.
+        # The json path is passed explicitly (condor workers may not read AFS);
+        # a reference copy lives in data/. Override with $ALEPH_BEAMSPOT_JSON.
         if self.ana_args.doData:
             beamspot_json = os.environ.get(
                 "ALEPH_BEAMSPOT_JSON",
@@ -376,10 +365,9 @@ class Analysis():
         df = df.Define("tracks_selected_baseline","tracks_selected_baseline_result.tracks") 
         df = df.Define("trackstates_selected_baseline","tracks_selected_baseline_result.trackStates") 
 
-        # Upper bounds on the impact parameters, pre-selecting tracks for the primary vertex fit.
-        # Referenced to the run beamspot (Beamspot_* are in 10um units -> cm); the raw track states
-        # are referenced to the origin, so in data an origin-referenced window would be off-centre
-        # by the beamspot offset. No effect on MC, where the beamspot is at the origin.
+        # Upper bounds on the impact parameters, pre-selecting tracks for the PV fit.
+        # Referenced to the run beamspot (Beamspot_* are in 10um units -> cm); with
+        # --oldPV to the origin, off-centre by the beamspot offset in data.
         d0_ip_max, z0_ip_max = self.ana_args.pvIPWindow
         if self.do_pvnew:
             df = df.Define("tracks_selected_for_vertexfit_result","AlephSelection::select_tracks_impactparameters_bs( tracks_selected_baseline_result, {}, {}, Beamspot_x*1e-3, Beamspot_y*1e-3, Beamspot_z*1e-3 )".format(d0_ip_max, z0_ip_max)) 
@@ -409,15 +397,13 @@ class Analysis():
         chi2max = self.ana_args.pvchi2 # the maximum chi2 under which tracks are compatible with vertex fit (default 5.)
 
         if self.do_pvnew:
-            # Standalone PV fitter (analyzer_pvnew.h): one fitter, one unit
-            # convention (cm), explicit converged flags — the selection fit and
-            # the final fit share the SAME beam-spot constraint by construction.
-            # Beamspot_x/y/z are in 10um units (get_beamspot convention) -> cm.
+            # Standalone PV fitter (analyzer_pvnew.h), all lengths in cm: the
+            # selection fit and the final fit share the same beam-spot constraint.
             bs_cm = ("FCCAnalyses::AlephPVNew::BeamSpot{{Beamspot_x*1e-3, Beamspot_y*1e-3, "
                      "Beamspot_z*1e-3, {}, {}, {}}}").format(res_x_loose * 1e-4, res_y_loose * 1e-4, res_z_loose)
             df = df.Define("PVSelNew", "FCCAnalyses::AlephPVNew::select_primary_tracks(trackstates_selected_for_vertexfit_flipped, {}, {})".format(bs_cm, chi2max))
-            # TWO flags: the known 33.9cm-event corruption came from the SELECTION
-            # fit, so a flag on the position fit alone cannot cover it. int-typed.
+            # Two flags: the selection fit can fail independently of the position
+            # fit, so one flag cannot cover both. int-typed.
             df = df.Define("pv_converged",       "int(PVSelNew.fit.converged)")
             df = df.Define("pv_split_converged", "int(PVSelNew.split_converged)")
             # fewer than 2 IP-preselected tracks entered the pruning: the fit
@@ -449,11 +435,9 @@ class Analysis():
         # for retrieving secondary tracks, use the full list of selected tracks
         df = df.Define("SecondaryTracks_looseBS", "VertexFitterSimple::get_NonPrimaryTracks(trackstates_selected_baseline_flipped, RecoedPrimaryTracks_looseBS)")
 
-        # original-Tracks index maps for the primary/secondary splits (truth-free:
-        # pure track-state matching, so they are written for DATA too). prim2origIdx
-        # gives the original-track indices of the fitted primary set, making the
-        # set's composition countable against truth; sec2origIdx is the join that
-        # v0n reco_ind / svn_trk_idx need to reach the original track collection.
+        # original-Tracks index maps for the primary/secondary splits (truth-free
+        # track-state matching, written for data too). sec2origIdx is the join
+        # that v0n reco_ind / svn_trk_idx need to reach the original tracks.
         df = df.Define("selBaselineOrigIdx", "FCCAnalyses::AlephTruth::selectedBaselineOriginalIndices(Tracks, _Tracks_trackStates, trackstates_selected_baseline)")
         df = df.Define("sec2origIdx",        "FCCAnalyses::AlephTruth::secondaryToOriginalTrack(SecondaryTracks_looseBS, trackstates_selected_baseline_flipped, selBaselineOrigIdx)")
         df = df.Define("prim2origIdx",       "FCCAnalyses::AlephTruth::secondaryToOriginalTrack(RecoedPrimaryTracks_looseBS, trackstates_selected_baseline_flipped, selBaselineOrigIdx)")
@@ -478,9 +462,7 @@ class Analysis():
         df = df.Define("Vertex_refit_cov_zz", "Vertex_refit_looseBS.covMatrix.values[5]")
 
         # PV fit quality (chi2/ndf as the fitter stores it): a silently
-        # non-converged Newton fit sits orders of magnitude above any genuine
-        # vertex, so this branch separates the failure mode at zero cost —
-        # the value was computed and discarded before.
+        # non-converged fit sits orders of magnitude above any genuine vertex.
         df = df.Define("Vertex_refit_chi2", "Vertex_refit_looseBS.chi2")
 
         df = df.Define("n_primary_tracks", "ReconstructedParticle2Track::getTK_n(RecoedPrimaryTracks_looseBS)")
@@ -549,9 +531,8 @@ class Analysis():
             "false)"                                  # exclusive V0 rejection (skip+break), matching FCCAnalyses@3a4de97 isV0 - the code that produced ntuples-withks
         )
         if self.do_pvnew:
-            # the old LCFIPlus finder FAILS OPEN under a garbage PV (its only
-            # PV-dependent cut is an angle<0 rejection, so it emits plausible
-            # 34cm-scale SVs) -> hard skip on the flag
+            # the old LCFIPlus finder fails OPEN under a garbage PV (its only
+            # PV-dependent cut is an angle<0 rejection) -> hard skip on the flag
             old_sv_expr = ("pv_converged ? " + old_sv_expr +
                            " : ROOT::VecOps::RVec<FCCAnalyses::VertexingUtils::FCCAnalysesVertex>{}")
         df = df.Define("SVs_looseBS", old_sv_expr)
@@ -722,8 +703,7 @@ class Analysis():
             df = df.Define("v0n_bandSig",     "FCCAnalyses::AlephV0New::candBandSig(V0sNew_event, SecondaryTracks_looseBS)")
             df = df.Define("v0n_massSig",     "FCCAnalyses::AlephV0New::candMassSig(V0sNew_event)")
             # V0 vertex-fit covariance (packed lower triangle, cm^2 — same
-            # component order as Vertex_refit_cov_*): settles the pointSig
-            # anisotropy attribution (track cov vs fitter cov vs PV cov)
+            # component order as Vertex_refit_cov_*)
             for ic, cc in enumerate(("xx", "yx", "yy", "zx", "zy", "zz")):
                 df = df.Define(f"v0n_cov_{cc}", f"FCCAnalyses::AlephV0New::candCovComp(V0sNew_event, {ic})")
             # per-daughter joins + dE/dx (truth-free: reco_ind -> sec2origIdx).
@@ -741,9 +721,9 @@ class Analysis():
             df = df.Define("v0n_vx",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 0)")
             df = df.Define("v0n_vy",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 1)")
             df = df.Define("v0n_vz",          "FCCAnalyses::AlephTruth::candVtxPos(V0sNew_event, 2)")
-            # per-jet new-module V0s: exact mirror of the old-finder v0_* block, run on V0sNew_event.
-            # Gives the NEW reco identical jet-level, jet-relative kinematics (prel = pT wrt jet axis,
-            # thetarel/phirel = direction wrt jet) so old (v0_*) vs new (v0njet_*) is apples-to-apples.
+            # per-jet new-module V0s: mirror of the old-finder v0_* block on
+            # V0sNew_event, so v0_* vs v0njet_* is an apples-to-apples comparison
+            # at jet level (prel = pT wrt jet axis, thetarel/phirel wrt the jet).
             df = df.Define("v0njet_per_jet", "FCCAnalyses::AlephSelection::assign_V0s_to_jets(V0sNew_event, jets)")
             df = df.Define("v0njet_jets",  "v0njet_per_jet.vtx")
             df = df.Define("v0njet_pdg",   "v0njet_per_jet.pdgAbs")
@@ -814,10 +794,9 @@ class Analysis():
                 for ic, cc in enumerate(("xx", "yx", "yy", "zx", "zy", "zz")):
                     df = df.Define(f"{pfx}_cov_{cc}", f"FCCAnalyses::AlephV0New::candCovComp(SVs_{pfx}, {ic})")
 
-            # V0-candidate pointing at the nearest svn vertex (largest cosine),
-            # feature only: no coupling back into the V0 or SV selections.
-            # SVs sharing a daughter track with the candidate are excluded
-            # (self-pointing); sentinels cos=-2, sig=-1, idx=-1.
+            # V0-candidate pointing at the nearest svn vertex (largest cosine).
+            # Feature only; SVs sharing a daughter track are excluded
+            # (self-pointing). Sentinels cos=-2, sig=-1, idx=-1.
             df = df.Define("v0n_svnpoint",    "FCCAnalyses::AlephV0New::candSVPointing(V0sNew_event, SVs_svn, sec2origIdx)")
             df = df.Define("v0n_svnCosPoint", "v0n_svnpoint.cosPoint")
             df = df.Define("v0n_svnPointSig", "v0n_svnpoint.pointSig")

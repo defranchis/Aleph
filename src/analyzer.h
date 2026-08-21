@@ -368,17 +368,9 @@ select_tracks_impactparameters(const SelectedTracks& input,
 }
 
 
-// Same pre-selection with |D0|, |Z0| measured w.r.t. the beamspot b = (bsx, bsy,
-// bsz) [cm] instead of the origin (raw ALEPH states are origin-referenced; in
-// data the beamspot is ~0.7 mm off in xy and up to ~1 cm in z).
-// Perigee re-referencing, u = (cos phi, sin phi), n = (-sin phi, cos phi):
-//   s   = u.b
-//   D0' = D0 + n.b + omega*s^2/2     (curvature term < 2 um, kept for exactness)
-//   Z0' = Z0 - bsz + tanLambda*s
-// Sign: raw ALEPH/FRFT d0 convention is opposite to EDM4HEP (flipD0_copy flips
-// D0 and omega together), hence +n.b here. Fixed empirically: with it the phi
-// modulation of the median D0 of primary-like data tracks vanishes.
-// Only the selection uses D0', Z0'; the stored track states are unchanged.
+// Same pre-selection with |D0|, |Z0| re-referenced to the beamspot b [cm]
+// instead of the origin. The raw ALEPH/FRFT d0 sign convention is opposite to
+// EDM4HEP, hence the +n.b sign. The stored track states are unchanged.
 SelectedTracks
 select_tracks_impactparameters_bs(const SelectedTracks& input,
                                   float d0_upper_bound,
@@ -684,9 +676,8 @@ struct build_constituents_dEdx_PIDhypo{
                   if (track_index_to_dEdx.count(track_index)) {
                     const auto &dEdx = track_index_to_dEdx[track_index];
 
-                    // A failed leg stores the track's omega as its value
-                    // (verbatim copy); dQdx.type is the pad-leg status only,
-                    // so it is not consulted.
+                    // A failed leg stores the track's omega as its value;
+                    // dQdx.type is the pad-leg status only, so it is not used.
                     const float v = dEdx.dQdx.value;
                     const float omega_sentinel =
                         (track_index >= 0 &&
@@ -946,15 +937,10 @@ get_ptrel_log_cluster(const rv::RVec<fastjet::PseudoJet> &jets,
 }
 
 // --- constituent track parameters w.r.t. the primary vertex ------------------
-// Same algebra as ReconstructedParticle2Track::XPtoPar_dxy/dz/phi/C/ct,
-// evaluated once per constituent, with every curvature term in cm units: the
-// upstream helpers use c in GeV/(T m) for dxy/dz/phi (positions in metres) and
-// GeV/(T mm) for C (curvature in 1/mm), while the ALEPH track states, their
-// covariances and the vertices are in cm and 1/cm. Inputs: the track-state
-// collection ordered by the RecoParticle->Track relation (so that
-// tracks.at(p.tracks_begin) is the particle's own state and neutral particles,
-// whose tracks_begin equals the number of links, fall outside it and get -9
-// for all three), the primary vertex (cm) and Bz (T).
+// Same algebra as ReconstructedParticle2Track::XPtoPar_dxy/dz/phi/C/ct but with
+// every length in cm and every curvature in 1/cm (the upstream helpers mix m and
+// mm). `tracks` must be ordered by the RecoParticle->Track relation; neutral
+// particles fall outside it and get -9.
 struct TrackParamsAtPV {
   rv::RVec<FCCAnalysesJetConstituentsData> dxy, dz, phi0, C, ct;
 };
@@ -1016,19 +1002,16 @@ get_constituent_trackParamsAtPV(const rv::RVec<FCCAnalysesJetConstituents> &jcs,
 }
 
 // Re-order a track-indexed collection through the ReconstructedParticle->Track
-// relation: entry j of the result is the object that relation entry j points at.
-// ReconstructedParticle::tracks_begin is an offset into that relation, not a
-// track index, and in the ALEPH files the two are not parallel; after this
-// re-ordering coll.at(p.tracks_begin) is correct, and neutral particles
-// (tracks_begin == number of links) fall outside the collection.
+// relation. tracks_begin is an offset into that relation, not a track index, and
+// the two are not parallel in the ALEPH files; after this coll.at(p.tracks_begin)
+// is the particle's own object.
 template <typename T>
 rv::RVec<T> reindexByRPLink(const rv::RVec<T> &coll,
                             const rv::RVec<int> &rpTrackIndex) {
   rv::RVec<T> out;
   out.reserve(rpTrackIndex.size());
   for (int idx : rpTrackIndex) {
-    // Out-of-range relation entry = corrupt input: fail loudly rather than
-    // emit a default element that downstream size guards would accept.
+    // Out-of-range relation entry = corrupt input: fail loudly.
     if (idx < 0 || idx >= static_cast<int>(coll.size()))
       throw std::runtime_error(
           "reindexByRPLink: RP->Track relation entry out of range");

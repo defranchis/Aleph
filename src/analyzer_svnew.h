@@ -1,26 +1,8 @@
 #ifndef ALEPH_SVNEW_ANALYZERS_H
 #define ALEPH_SVNEW_ANALYZERS_H
 
-// ---------------------------------------------------------------------------
-// WP3 standalone secondary-vertex module (PROTOTYPE, 2026-07-26).
-//
-// Design (user-directed): V0-FIRST pipeline — the new V0 module claims its
-// tracks first; this finder runs on the remaining secondary tracks. Same
-// construction principles as the V0 module (analyzer_v0new.h): one consistent
-// VertexFitter_Tk fit per candidate (no mixed-unit second fit — the known
-// resolution defect of the reference SV chain), alltracks passed so reco_ind
-// is FILLED (track-content truth matching; the old sv_* block leaves it
-// empty), greedy quality-ranked track claiming.
-//
-// Old-finder pathologies explicitly guarded against:
-//  - degenerate collinear 2-track fits far from the PV (18% of old SVs, 85%
-//    truth-unmatched): sigma_L guard (projected vertex covariance along the
-//    candidate momentum) + displacement window;
-//  - dR_prefilter=0.8 seed geometry: no dR prefilter here at all.
-//
-// All cut values are PROTOTYPE engineering values, not adopted physics —
-// tabled for user sign-off in the WP3 design round.
-// ---------------------------------------------------------------------------
+// Standalone secondary-vertex finder on the secondary-track collection, run
+// after the V0 module has claimed its tracks (V0-first pipeline).
 
 #include "ROOT/RVec.hxx"
 #include "TVector3.h"
@@ -37,8 +19,7 @@ namespace AlephSVNew {
 
 using ROOT::VecOps::RVec;
 
-// The cut values are caller-supplied with no defaults here: stage1.py's argparse
-// is the single source of the production values.
+// Cut values are caller-supplied; no defaults here.
 constexpr double SVN_MPI = 0.13957039;
 
 // sigma along direction u from the edm4hep lower-triangular covMatrix
@@ -51,19 +32,10 @@ inline double sigmaAlong(const Cov& c, const TVector3& u) {
   return (var > 0.) ? std::sqrt(var) : 0.;
 }
 
-// ---------------------------------------------------------------------------
-// findSVs: standalone SV finder on the secondary-track collection.
-//   v0s / v0_tight: output of AlephV0New::findV0s + candTight flags, used to
-//   MASK V0-claimed tracks before SV finding.
-//   mask_mode: 0 = no masking (control twin), 1 = mask tight-claimed tracks
-//   (default), 2 = mask all V0-claimed tracks (incl. loose tier).
-// Returns FCCAnalysesV0 (struct reused: pdgAbs = 0, invM = N-pion mass) so the
-// existing candChi2/candDxyz/candP/candCosPointing/candPointSig getters apply.
-// reco_ind indexes the SECONDARY track collection (np_tracks). NOTE this is
-// NOT the index space of v0n_trk1/trk2, which are ORIGINAL Tracks indices
-// (classifyV0s maps them through sec2orig, analyzer_truth.h) — walk reco_ind
-// through sec2origIdx before comparing against them.
-// ---------------------------------------------------------------------------
+// findSVs: v0s/v0_tight mask V0-claimed tracks; mask_mode 0 = none, 1 = tight
+// only, 2 = all V0-claimed. Returns FCCAnalysesV0 (pdgAbs = 0, invM = N-pion
+// mass); reco_ind indexes the SECONDARY collection, NOT the original Tracks
+// index space of v0n_trk1/trk2 (map through sec2origIdx to compare).
 inline VertexingUtils::FCCAnalysesV0 findSVs(
     const RVec<edm4hep::TrackState>& np_tracks,
     const VertexingUtils::FCCAnalysesVertex& PV,
@@ -109,13 +81,11 @@ inline VertexingUtils::FCCAnalysesV0 findSVs(
     auto v = VertexFitterSimple::VertexFitter_Tk(
         0, group, np_tracks, false, 0., 0., 0., 0., 0., 0., solenoidBz, false);
     if ((int)v.updated_track_momentum_at_vertex.size() != (int)idx.size()) return false;
-    // cm-as-mm homothety: momentum magnitudes 10x too small — rescale ONCE
-    // at the source (identical to the V0 module).
+    // cm-as-mm homothety: momentum magnitudes 10x too small — rescale once.
     for (auto& tp : v.updated_track_momentum_at_vertex) tp *= 10.;
     double chi2 = v.vertex.chi2;  // normalised
     if (!(chi2 == chi2) || chi2 >= chi2_cut) return false;
-    // per-track compatibility: the global normalised chi2 dilutes as tracks
-    // are added — every track must individually fit the vertex
+    // per-track compatibility: every track must individually fit the vertex
     if (trk_chi2 > 0 && v.reco_chi2.size() == idx.size())
       for (float rc : v.reco_chi2)
         if (rc > trk_chi2) return false;
@@ -146,8 +116,7 @@ inline VertexingUtils::FCCAnalysesV0 findSVs(
   };
 
   // ---- seed pass: all unmasked pairs, any charge combination -------------
-  // pairok caches which pairs fit together at all — growth later only tries
-  // tracks that pair-fit with a current member (speed + junk suppression).
+  // pairok caches which pairs fit together; growth only tries pair-linked tracks.
   std::vector<Cand> seeds;
   std::vector<char> pairok((size_t)nTr * nTr, 0);
   for (int i = 0; i < nTr - 1; ++i) {
@@ -186,10 +155,8 @@ inline VertexingUtils::FCCAnalysesV0 findSVs(
         if (!fitGroup(trial, v)) continue;
         double m;
         if (!passWindows(v, m)) continue;
-        // position-stability guard: a track that DRAGS the vertex is a track
-        // from a different decay (the b->c cascade sits ~0.06 cm downstream of
-        // its parent b vertex).  Reject growth steps that move the fitted
-        // vertex by more than grow_shift.  0 = guard off.
+        // position-stability guard: reject growth steps moving the fitted
+        // vertex by more than grow_shift (cm). 0 = guard off.
         if (grow_shift > 0.) {
           TVector3 xn(v.vertex.position[0], v.vertex.position[1], v.vertex.position[2]);
           if ((xn - xc).Mag() > grow_shift) continue;
@@ -205,15 +172,9 @@ inline VertexingUtils::FCCAnalysesV0 findSVs(
   };
 
   // ---- seed ordering -----------------------------------------------------
-  // claim_mode 0 (default, as prototyped): best normalised chi2 first.
-  // claim_mode 1: densest seed first — order by the number of tracks that
-  //   pair-fit with BOTH seed members ("clique size", free: read off pairok),
-  //   chi2 as tie-break.  Rationale: chi2-ascending actively prefers the
-  //   degenerate 2-track junk pairs (their chi2 q10 is 0.006 vs 0.19 for
-  //   truth-matched candidates), which then claim tracks before real vertices.
-  // claim_mode 2: two-phase — grow EVERY seed with all tracks available, then
-  //   claim the grown candidates by (ntracks desc, chi2 asc).  Removes the
-  //   dependence on seed order entirely at the price of many more fits.
+  // claim_mode 0 = best normalised chi2 first; 1 = densest seed first (clique
+  // size from pairok, chi2 tie-break); 2 = grow every seed with all tracks
+  // available, then claim by (ntracks desc, chi2 asc).
   std::vector<size_t> order(seeds.size());
   std::iota(order.begin(), order.end(), 0);
   if (claim_mode == 1) {
@@ -272,10 +233,8 @@ inline VertexingUtils::FCCAnalysesV0 findSVs(
   return result;
 }
 
-// ---------------------------------------------------------------------------
 // svn-specific getters (generic candChi2/candDxyz/candP/candCosPointing/
 // candPointSig come from AlephTruth/AlephV0New on the shared struct).
-// ---------------------------------------------------------------------------
 inline RVec<int> candNtracks(const VertexingUtils::FCCAnalysesV0& svs) {
   RVec<int> out;
   for (const auto& v : svs.vtx) out.push_back((int)v.reco_ind.size());
@@ -283,8 +242,6 @@ inline RVec<int> candNtracks(const VertexingUtils::FCCAnalysesV0& svs) {
 }
 
 // SV position components relative to the PV (comp 0/1/2 = x/y/z), cm.
-// Needed offline: candDxyz gives only the magnitude, while truth position
-// matching against the true SV needs the full displacement vector.
 inline RVec<float> candDcomp(const VertexingUtils::FCCAnalysesV0& svs,
                              const VertexingUtils::FCCAnalysesVertex& PV,
                              int comp) {
@@ -306,10 +263,9 @@ inline RVec<float> candSigL(const VertexingUtils::FCCAnalysesV0& svs) {
   return out;
 }
 
-// flat candidate<->track association (variable-length track lists):
-// candTrkSV[k] = candidate index of the k-th association, candTrkIdx[k] = its
-// track index in the SECONDARY collection (NOT the v0n_trk1/2 space — those
-// are ORIGINAL Tracks indices; map through sec2origIdx to compare).
+// Flat candidate<->track association: candTrkSV[k] = candidate index,
+// candTrkIdx[k] = its track index in the SECONDARY collection (NOT the
+// v0n_trk1/2 original-Tracks space; map through sec2origIdx to compare).
 inline RVec<int> candTrkSV(const VertexingUtils::FCCAnalysesV0& svs) {
   RVec<int> out;
   for (size_t i = 0; i < svs.vtx.size(); ++i)

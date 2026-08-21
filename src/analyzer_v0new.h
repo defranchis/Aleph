@@ -2,36 +2,9 @@
 #define ALEPHV0NEW_H
 
 /*
-  Standalone improved V0 reconstruction.
-  Keeps the reference VertexFinderLCFIPlus::get_V0s untouched for comparisons;
-  same event-level output type (VertexingUtils::FCCAnalysesV0) so downstream
-  plumbing (assign_V0s_to_jets, property getters) works unchanged.
-
-  Design changes vs the reference (each motivated by a measured failure mode):
-   - SINGLE consistent fit: one VertexFitter_Tk call with rescale_cm_mm=false.
-     The ALEPH cm-native trackstates run through the primary fit as a
-     self-consistent homothety (all lengths numerically cm); vertex position,
-     chi2, phases and momentum DIRECTIONS are exact, and momentum MAGNITUDES
-     from that same fit need only the exact factor 10 (cm-as-mm homothety;
-     the Bz/2 factor is already applied inside the fitter). This removes the
-     reference's second fit with mixed units (par mm / cov cm) - the dominant
-     FP-instability amplifier - and its mixed-fit outputs.
-   - SINGLE best-hypothesis assignment per pair (no Ks+Lambda+Lambdabar
-     multi-booking): among windows passed, smallest normalised mass distance.
-   - QUALITY-RANKED global claiming: all pairs are fitted first, candidates
-     sorted by vertex chi2, tracks claimed in that order (removes the
-     track-ordering dependence of the reference's greedy first-come loop).
-   - Displacement window [dis_lo, dis_hi] in cm (upper bound new: junk lives
-     at large dxyz), cosPointing cut, optional per-track fit-chi2 cut.
-   - reco_ind is FILLED (the alltracks overload) so candidate->track-pair
-     association needs no replica bookkeeping.
-
-  Sign conventions: input = flipD0_copy'ed trackstates, params AND covariance
-  consistently ALEPH->LCIO transformed.
-  Distance units: all fit-chain positions are numerically cm (verified).
-
-  Cut values are TUNABLE arguments; the defaults below are the adopted
-  package, tuned on truth-matched MC.
+  Standalone improved V0 reconstruction; output type
+  VertexingUtils::FCCAnalysesV0. Input = flipD0_copy'ed trackstates (params AND
+  covariance ALEPH->LCIO transformed); all fit-chain positions are in cm.
 */
 
 #include <algorithm>
@@ -57,11 +30,9 @@ const double MKS   = 0.497611;
 const double MLAM  = 1.115683;
 
 // ---------------------------------------------------------------------------
-// Cut package: single named source. TIGHT = the adopted physics package;
-// the findV0s parameter defaults reference these, and candTight re-evaluates
-// them offline. LOOSE = the ML-training superset tier: flat pointing, widened
-// AP bands, relaxed Lambda qT veto. Mass windows, chi2 and displacement window
-// are COMMON to both tiers.
+// Cut package: single named source. TIGHT = adopted package (findV0s defaults;
+// candTight re-evaluates it offline), LOOSE = ML-training superset tier. Mass
+// windows, chi2 and displacement window are COMMON to both tiers.
 // ---------------------------------------------------------------------------
 constexpr double KS_M_LO = 0.40, KS_M_HI = 0.60;
 constexpr double LAM_M_LO = 1.08, LAM_M_HI = 1.20;
@@ -69,12 +40,8 @@ constexpr double DIS_LO = 0.1, DIS_HI = 150.;
 constexpr double CHI2_CUT = 10.;
 constexpr double TIGHT_COS_KS_LOWP = 0.999, TIGHT_COS_KS_MIDP = 0.9995,
                  TIGHT_COS_KS_HIGHP = 0.9999;
-// Lambda tight pointing: p-tiered — {x1, x2, x2} loosening in 1-cos relative
-// to the earlier flat cut. A x10 opening of the mid tier (0.9995) was tried
-// and reverted to 0.9999 after a heavy-flavour closure study measured its
-// 2-4 GeV purity at 0.61 (marginal purity of the admitted candidates 33%):
-// b-decay track pairs point too well for so wide a mid tier.
-// Deliberately NOT a mirror of the Ks ladder.
+// Lambda tight pointing, p-tiered in cos; deliberately NOT a mirror of the
+// Ks ladder.
 constexpr double TIGHT_COS_LAM_LOWP = 0.99995, TIGHT_COS_LAM_MIDP = 0.9999,
                  TIGHT_COS_LAM_HIGHP = 0.9999;
 constexpr double TIGHT_QT_MIN_LAM = 0.04;
@@ -86,28 +53,21 @@ constexpr double LOOSE_NSIG_KS = 6.;
 constexpr double LOOSE_LAM_BAND_LO = 0.20, LOOSE_LAM_BAND_HI = 0.40;
 // LOOSE Lambda band-distance acceptance: the stored loose tier keeps
 // |ell-1| / thr(p) below this fraction of the ramp half-width (see
-// lamBandThrLoose). Measured on the Lambda-tail study as the working point
-// that removes the bulk of the m>1.14 GeV combinatorial tail at ~zero true
-// Lambda cost.
+// lamBandThrLoose).
 constexpr double LOOSE_LAM_BAND_FRAC = 0.8;
 // widened loose Lambda band for the tail-measurement variant (2x nominal)
 constexpr double WIDE_LAM_BAND_LO = 2. * LOOSE_LAM_BAND_LO,
                  WIDE_LAM_BAND_HI = 2. * LOOSE_LAM_BAND_HI;
 constexpr double LAM_P_LO = 8., LAM_P_HI = 20.;
-// Lambda AP-band ellipse resolution: quadrature fit to the measured 68% width
-// of the band variable vs p (truth-matched Lambda, p>2.5, light-flavour MC).
-// Note: "nsig" is in units of that 68% width.
-// NB: the SV prototype checkout still carries an earlier version of this
-// package (flat Lambda tight pointing, fixed-ramp Lambda band).
+// Lambda AP-band ellipse resolution sigma_ell(p), quadrature model;
+// "nsig" is in units of this 68% width.
 constexpr double SIG_ELL_LAM_A = 0.01622, SIG_ELL_LAM_B = 0.0033748,
                  SIG_ELL_LAM_C = 0.00015544;
 // Ks AP-band ellipse resolution, linear model — single source for the
 // tight/loose band cuts AND the bandSig pull.
 constexpr double SIG_ELL_KS_A = 0.007, SIG_ELL_KS_B = 0.0015;
 constexpr double TIGHT_LAM_NSIG = 3.;
-// Mass resolution sigma_m(p) [GeV]: quadrature fits to the measured mass
-// resolution vs p over the full mass window (p>2.5; binned-fit estimator,
-// descriptive) — used by candMassSig.
+// Mass resolution sigma_m(p) [GeV], quadrature model — used by candMassSig.
 constexpr double SIG_M_KS_A = 2.658e-3, SIG_M_KS_B = 0.5214e-3,
                  SIG_M_KS_C = 0.01418e-3;
 constexpr double SIG_M_LAM_A = 1.045e-3, SIG_M_LAM_B = 0.2357e-3,
@@ -135,8 +95,7 @@ inline double sigmaEllKs(double pmag) {
   return SIG_ELL_KS_A + SIG_ELL_KS_B * pmag;
 }
 inline double ksBandThr(double pmag, double floor_, double nsig_lo, double nsig_hi) {
-  // resolution-scaled width: sigma_ell ~ 0.007+0.0015p;
-  // floor_ acts as the low-p floor (bit-identical below ~9.5 GeV at nsig=3)
+  // resolution-scaled width; floor_ acts as the low-p floor
   double nsig = (pmag < 15.) ? nsig_lo : nsig_hi;
   return std::max(floor_, nsig * sigmaEllKs(pmag));
 }
@@ -155,38 +114,27 @@ inline double sigmaEllLam(double pmag) {
                    std::pow(SIG_ELL_LAM_B * pmag, 2) +
                    std::pow(SIG_ELL_LAM_C * pmag * pmag, 2));
 }
-// TIGHT Lambda AP band: resolution-scaled, floored at the earlier fixed low-p
-// edge and CAPPED at the nominal ramp edge (measured on b/c events:
-// +2.0/+3.9pp true Lambda >10 GeV at ~-1.4pp local purity; the cap avoids
-// dilute >25 GeV admissions).
-// The cap deliberately references the NOMINAL loose ramp edges, so the adopted
-// tight package is config-independent. The tight-inside-loose invariant is
-// enforced on the LOOSE side: lamBandThrLoose floors its threshold at this
-// value, so every tight candidate stays inside the stored loose superset at
-// every momentum and the selection stays offline-reversible.
+// TIGHT Lambda AP band: resolution-scaled, floored at floor_ and capped at the
+// NOMINAL loose ramp edge (so the tight package is config-independent). The
+// tight-inside-loose invariant is enforced on the loose side.
 inline double lamBandThrTight(double pmag, double floor_ = AP_LAM_LO,
                               double nsig = TIGHT_LAM_NSIG) {
   return std::min(std::max(floor_, nsig * sigmaEllLam(pmag)),
                   lamBandThr(pmag, LOOSE_LAM_BAND_LO, LOOSE_LAM_BAND_HI));
 }
 
-// LOOSE Lambda AP band: BAND-DISTANCE convention — the stored acceptance is a
-// fixed fraction of the ramp half-width at every momentum
-// (|ell-1| < LOOSE_LAM_BAND_FRAC * thr(p)) instead of the raw ramp, which
-// admitted a wide combinatorial tail well beyond the measured band resolution.
-// Floored at the tight threshold so the loose tier stays a superset of the
-// tight one at every momentum; tight_floor mirrors the tight-clause floor of
-// the caller, so the invariant holds under a floor override too. With the
-// nominal ramp the fraction falls below the tight threshold above ~22 GeV,
-// where the two tiers coincide and no loose-only Lambda sideband remains.
+// LOOSE Lambda AP band: BAND-DISTANCE convention — acceptance is a fixed
+// fraction of the ramp half-width (|ell-1| < LOOSE_LAM_BAND_FRAC * thr(p)),
+// floored at the tight threshold (tight_floor mirrors the caller's tight-clause
+// floor) so the loose tier stays a superset of the tight one at every p.
 inline double lamBandThrLoose(double pmag, double lo, double hi,
                               double tight_floor = AP_LAM_LO) {
   return std::max(LOOSE_LAM_BAND_FRAC * lamBandThr(pmag, lo, hi),
                   lamBandThrTight(pmag, tight_floor));
 }
 
-// momenta of the two tracks at the fitted vertex (already rescaled to the true
-// GeV scale inside findV0s, so every downstream consumer sees consistent values)
+// momenta of the two tracks at the fitted vertex, already rescaled to the true
+// GeV scale inside findV0s
 inline void pairMomenta(const VertexingUtils::FCCAnalysesVertex& v,
                         TVector3& p1, TVector3& p2) {
   p1 = v.updated_track_momentum_at_vertex[0];
@@ -202,35 +150,31 @@ inline double invMass(const TVector3& p1, double m1, const TVector3& p2, double 
 }
 
 // ---------------------------------------------------------------------------
-// The finder.
-//   np_tracks : flipD0_copy'ed non-primary trackstates (LCIO-consistent)
-//   PV        : fitted primary vertex (positions numerically cm)
-// TWO-TIER selection: every pair is evaluated against the TIGHT (adopted)
-// package first; only tight-failing pairs enter the LOOSE training tier.
-// Tight candidates claim tracks first, so filtering the output to tight
-// candidates (candTight==1) reproduces the tight-only module output EXACTLY,
-// as if the loose tier had never run. Returns candidates in claim order
-// (tight block first, chi2 ascending within each tier); pdgAbs holds the
-// single best hypothesis (310 or 3122); invM the mass under that hypothesis.
+// The finder. np_tracks = flipD0_copy'ed non-primary trackstates, PV = fitted
+// primary vertex (positions in cm). TWO-TIER: only tight-failing pairs enter the
+// LOOSE tier, and tight candidates claim tracks first, so candTight==1 selects
+// exactly the tight-only output. Returns candidates in claim order (tight block
+// first, chi2 ascending within a tier); pdgAbs = best hypothesis (310 or 3122),
+// invM its mass.
 // ---------------------------------------------------------------------------
 inline VertexingUtils::FCCAnalysesV0 findV0s(
     const RVec<edm4hep::TrackState>& np_tracks,
     const VertexingUtils::FCCAnalysesVertex& PV,
     double solenoidBz = 1.5,
-    double cos_point_ks = TIGHT_COS_KS_HIGHP,          // Ks pointing, p>=4 GeV tier; first cut arg so the stage1 --v0nKsPointing override passes ONLY this value (NB candTight assumes the default)
+    double cos_point_ks = TIGHT_COS_KS_HIGHP,          // Ks pointing, p>=4 GeV tier; first cut arg, so the --v0nKsPointing override passes ONLY this value
     double ks_m_lo = KS_M_LO, double ks_m_hi = KS_M_HI,        // Ks mass window [GeV] (sidebands kept; common to both tiers)
     double lam_m_lo = LAM_M_LO, double lam_m_hi = LAM_M_HI,    // Lambda mass window [GeV] (common to both tiers)
     double dis_lo = DIS_LO, double dis_hi = DIS_HI,            // displacement window [cm] (common)
     double cos_point_lam = TIGHT_COS_LAM_LOWP,         // tight Lambda pointing, p<2 GeV tier (the tiers above use TIGHT_COS_LAM_MIDP/HIGHP via lamPointThr)
     double qt_min_lam = TIGHT_QT_MIN_LAM,              // tight Armenteros qT conversion veto, Lambda hyp [GeV]
-    double cos_ks_lowp = TIGHT_COS_KS_LOWP,            // tight Ks pointing, p<2 GeV tier (p-dependent: flat cut crushed low-p Ks)
+    double cos_ks_lowp = TIGHT_COS_KS_LOWP,            // tight Ks pointing, p<2 GeV tier
     double cos_ks_midp = TIGHT_COS_KS_MIDP,            // tight Ks pointing, 2<=p<4 GeV tier
     double ap_band_ks = AP_BAND_KS,                    // Ks exact-locus AP band |ell-1| floor (<=0 disables the band in BOTH tiers)
-    double ap_lam_lo = AP_LAM_LO, double ap_lam_hi = AP_LAM_HI, // tight Lambda band: lo = floor of the sigma-scaled capped thr (lamBandThrTight; <=0 off); hi retained for signature stability (fixed-ramp edge, no longer read by the tight path)
+    double ap_lam_lo = AP_LAM_LO, double ap_lam_hi = AP_LAM_HI, // tight Lambda band: lo = floor of the capped thr (lamBandThrTight; <=0 off); hi not read by the tight path
     double chi2_cut = CHI2_CUT,                        // vertex chi2 (ndf=1, common)
     double trk_chi2_cut = -1.,                         // per-track chi2 (<=0 off, common)
-    bool lam_point_ks_tiers = false,                   // sizing variant: tight Lambda pointing uses the Ks p-tiers instead of cos_point_lam; candTight still encodes the ADOPTED package
-    double loose_lam_lo = LOOSE_LAM_BAND_LO,           // tail-measurement variant: LOOSE Lambda AP band ramp edges; the stored acceptance is
+    bool lam_point_ks_tiers = false,                   // sizing variant: tight Lambda pointing uses the Ks p-tiers; candTight still encodes the ADOPTED package
+    double loose_lam_lo = LOOSE_LAM_BAND_LO,           // LOOSE Lambda AP band ramp edges; the stored acceptance is
     double loose_lam_hi = LOOSE_LAM_BAND_HI) {         // LOOSE_LAM_BAND_FRAC x this ramp, floored at the tight band (lamBandThrLoose)
 
   VertexingUtils::FCCAnalysesV0 result;
@@ -262,7 +206,7 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
       if (v.updated_track_momentum_at_vertex.size() != 2) continue;
       // cm-as-mm homothety: single-fit momentum magnitudes are 10x too small
       // (Bz/2 already applied inside the fitter); rescale ONCE at the source so
-      // masses, p, qt and every ntuple branch downstream are consistent
+      // masses, p, qt and every downstream branch are consistent
       for (auto& tp : v.updated_track_momentum_at_vertex) tp *= 10.;
       double chi2 = v.vertex.chi2; // normalised, ndf=1
       if (chi2 >= chi2_cut || !(chi2 == chi2)) continue;
@@ -296,14 +240,9 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
       double mlam = (p1.Mag() > p2.Mag()) ? invMass(p1, m_p_, p2, m_pi_)
                                           : invMass(p1, m_pi_, p2, m_p_);
 
-      // TIGHT (adopted) package first. Arbitration among the tight-passing
+      // TIGHT (adopted) package first; arbitration among the tight-passing
       // hypotheses only, so the tight subset is EXACTLY what the module would
       // output with the loose tier switched off.
-      // Ks: p-dependent pointing tiers + resolution-scaled exact-locus AP band
-      // (sigma-scaling rationale: fixed width shrank to 0.85 sigma at 30-40 GeV
-      // and caused the high-p efficiency deficit; p>=15 GeV runs at 4 sigma).
-      // Lambda: pointing + qT conversion veto + p-dependent exact-locus band
-      // (protects the 10-20 GeV s-tagging bins).
       bool inWinKs = (mks > ks_m_lo && mks < ks_m_hi);
       bool inWinLam = (mlam > lam_m_lo && mlam < lam_m_hi);
       bool okKs = inWinKs && cp > ksPointThr(pmag, cos_ks_lowp, cos_ks_midp, cos_point_ks);
@@ -364,15 +303,10 @@ inline VertexingUtils::FCCAnalysesV0 findV0s(
 }
 
 // ---------------------------------------------------------------------------
-// Sizing-variant entry point: identical to the adopted findV0s defaults except
-// that the tight-tier Lambda pointing is aligned to the Ks p-tiers
-// (0.999 / 0.9995 / 0.9999 for p<2 / 2-4 / >=4 GeV), to size how much the
-// Lambda yield depends on that choice. Defaults are spelled here in C++ next
-// to their constants (single source, no Python-side hand-sync). NOT for
-// standard productions. NB (verified): the v0n_tight branch in its output
-// STILL encodes the ADOPTED package (candTight re-derivation) — NOT
-// variant-tier membership. Variant-tight must be re-derived offline from
-// kinematics; trusting v0n_tight would silently drop the tier migrants.
+// Sizing variant: adopted findV0s defaults except that the tight-tier Lambda
+// pointing follows the Ks p-tiers. NOT for standard productions; the v0n_tight
+// branch in its output still encodes the ADOPTED package, not variant-tier
+// membership (re-derive variant-tight offline from kinematics).
 // ---------------------------------------------------------------------------
 inline VertexingUtils::FCCAnalysesV0 findV0sLamKsPointing(
     const RVec<edm4hep::TrackState>& np_tracks,
@@ -386,11 +320,9 @@ inline VertexingUtils::FCCAnalysesV0 findV0sLamKsPointing(
 }
 
 // ---------------------------------------------------------------------------
-// Tail-measurement entry point: adopted defaults except the LOOSE Lambda AP
-// band ramp edges doubled 0.20/0.40 → 0.40/0.80 (stored acceptance is
-// LOOSE_LAM_BAND_FRAC times the ramp), so the band tail beyond the standard
-// loose acceptance becomes measurable offline. NOT for standard productions;
-// as above, v0n_tight in its output still encodes the adopted tight package.
+// Tail-measurement variant: adopted defaults except the LOOSE Lambda AP band
+// ramp edges doubled (stored acceptance = LOOSE_LAM_BAND_FRAC x the ramp). NOT
+// for standard productions; v0n_tight still encodes the adopted tight package.
 // ---------------------------------------------------------------------------
 inline VertexingUtils::FCCAnalysesV0 findV0sWideLamLoose(
     const RVec<edm4hep::TrackState>& np_tracks,
@@ -429,16 +361,9 @@ inline RVec<float> candAlpha(const VertexingUtils::FCCAnalysesV0& v0s,
   return out;
 }
 
-// Offline tight-package flag: 1 if the candidate's BOOKED hypothesis passes
-// the adopted tight package (Ks pointing tiers + resolution-scaled band;
-// Lambda pointing tiers + 3sigma-capped AP band), 0 if it entered via the
-// loose training tier. Uses the same shared helpers/constants as findV0s
-// (single source). NOTE cross-production semantics: ntuples produced with
-// earlier versions of this module carry earlier flag definitions (flat Lambda
-// pointing and/or fixed-ramp band) — v0n_tight is NOT comparable across
-// module versions; any tighter package remains re-derivable offline from the
-// stored loose tier. Assumes the adopted package (no variant override in the
-// production). Works on data.
+// Offline tight-package flag: 1 if the candidate's BOOKED hypothesis passes the
+// adopted tight package, 0 if it entered via the loose training tier. Uses the
+// shared helpers/constants of findV0s; assumes no variant override. On data.
 inline RVec<int> candTight(const VertexingUtils::FCCAnalysesV0& v0s,
                            const VertexingUtils::FCCAnalysesVertex& PV,
                            const RVec<edm4hep::TrackState>& secondaries) {
@@ -484,19 +409,9 @@ inline RVec<int> candTight(const VertexingUtils::FCCAnalysesV0& v0s,
   return out;
 }
 
-// ML-input pulls: the selection variables the module cuts on, expressed in
-// resolution units so trainers need no sigma models of their own. Both
-// SIGNED; -999 = undefined candidate.
-// bandSig: (bandEll - 1) / sigma_ell(p) of the BOOKED hypothesis
-//          (Ks: linear 0.007+0.0015p; Lambda: quadrature sigmaEllLam).
-//          The tight cut is |bandSig|-based for Lambda (nsig=3 capped),
-//          so this is the cut variable itself.
-// massSig: (invM - m_hyp) / sigma_m(p), quadrature fits (MeV coefficients
-//          Ks {2.658, 0.5214, 0.01418}, Lambda {1.045, 0.2357, 0.005511};
-//          binned-fit estimator, descriptive). Remaining cut variables
-//          (cosPointing, qt, chi2, dxyz, p, invM) are already stored raw;
-//          threshold margins are offline-derivable from them + the shared
-//          helpers.
+// ML-input pulls of the BOOKED hypothesis, in resolution units. Both SIGNED;
+// -999 = undefined candidate. bandSig = (bandEll - 1) / sigma_ell(p),
+// massSig = (invM - m_hyp) / sigma_m(p). Other cut variables are stored raw.
 inline RVec<float> candBandSig(const VertexingUtils::FCCAnalysesV0& v0s,
                                const RVec<edm4hep::TrackState>& secondaries) {
   RVec<float> out;
@@ -547,15 +462,10 @@ inline RVec<float> candMassSig(const VertexingUtils::FCCAnalysesV0& v0s) {
 }
 
 // Pointing significance: chi2-like significance of the displacement component
-// PERPENDICULAR to the candidate momentum, using candidate + reference-vertex
-// position covariance (all in the consistent cm space). A well-pointing
-// candidate has sig ~ O(1) regardless of how precisely it is measured — the
-// basis for replacing the fixed cosPointing threshold with a measurement-aware
-// cut. Returns -1 for degenerate geometry or a singular/non-positive
-// transverse covariance.
-//   d  = candidate vertex - reference vertex, p = candidate momentum
-//   cV / cR = packed lower-triangular position covariances (xx,yx,yy,zx,zy,zz)
-// The reference is the PV for candPointSig and an SV for candSVPointing.
+// PERPENDICULAR to the candidate momentum (all in cm). d = candidate vertex -
+// reference vertex, p = candidate momentum, cV/cR = packed lower-triangular
+// position covariances (xx,yx,yy,zx,zy,zz); reference = PV for candPointSig, an
+// SV for candSVPointing. Returns -1 for degenerate or singular geometry.
 template <typename CovV, typename CovR>
 inline float pointSigTransverse(const TVector3& d, const TVector3& p,
                                 const CovV& cV, const CovR& cR) {
@@ -610,10 +520,9 @@ inline RVec<float> candQt(const VertexingUtils::FCCAnalysesV0& v0s) {
 // vertex-fit covariance exposure + per-daughter joins
 // ---------------------------------------------------------------------------
 
-// Vertex-fit covariance component ic of every candidate (packed lower
-// triangle: 0=xx 1=yx 2=yy 3=zx 4=zy 5=zz, cm^2 — same packing as the
-// Vertex_refit_cov_* PV branches). Works for the V0 module output AND the
-// new-SV module output (both are FCCAnalysesV0).
+// Vertex-fit covariance component ic of every candidate (packed lower triangle:
+// 0=xx 1=yx 2=yy 3=zx 4=zy 5=zz, cm^2 — same packing as Vertex_refit_cov_*).
+// Works for the V0 and the new-SV module output (both are FCCAnalysesV0).
 inline RVec<float> candCovComp(const VertexingUtils::FCCAnalysesV0& v0s,
                                int ic) {
   RVec<float> out;
@@ -622,8 +531,7 @@ inline RVec<float> candCovComp(const VertexingUtils::FCCAnalysesV0& v0s,
 }
 
 // Daughter k (0/1) of every candidate as an ORIGINAL Tracks index: reco_ind
-// (secondary space) walked through sec2origIdx. -1 when unavailable. This is
-// the truth-free join — unlike v0n_trk1/2 it needs no --truthV0.
+// (secondary space) walked through sec2orig. -1 when unavailable; truth-free.
 inline RVec<int> candDaughterOrigIdx(const VertexingUtils::FCCAnalysesV0& v0s,
                                      const RVec<int>& sec2orig, int k) {
   RVec<int> out;
@@ -639,28 +547,12 @@ inline RVec<int> candDaughterOrigIdx(const VertexingUtils::FCCAnalysesV0& v0s,
 }
 
 // ---------------------------------------------------------------------------
-// Pointing of every V0 candidate at the nearest secondary vertex.
-// PURELY A FEATURE: nothing here feeds back into candidate definition,
-// hypothesis arbitration or track claiming.
-//
-// "Nearest" = the SV giving the LARGEST cosine between the candidate momentum
-// and the SV->candidate flight line, among the allowed SVs. An SV sharing a
-// daughter track with the candidate is excluded: SV finding masks, by default,
-// only the TIGHT-claimed V0 tracks, so a loose-tier candidate's own pair can
-// reappear as an SV sitting on top of the V0 vertex (self-pointing artefact).
-//
-// INDEX SPACES: SV reco_ind lives in the SECONDARY track collection, so both
-// legs of the overlap test are walked through sec2orig into the ORIGINAL
-// Tracks space before comparison; an unmapped index (-1) never matches. The
-// veto therefore fails OPEN: a candidate whose daughters do not map back to
-// original tracks excludes nothing.
-//
-// Sentinels (cos = -2, sig = -1, idx = -1) whenever no usable SV remains:
-// no SV in the event, all of them vetoed, all of them coincident with the
-// candidate vertex, or a null candidate momentum. Truth-free (works on data).
-// Note: pointSig is also -1 when pointSigTransverse() meets a singular
-// transverse covariance while an SV WAS selected (idx >= 0, cos valid), so
-// "no SV" must be tested on idx (or cos), never on pointSig alone.
+// Pointing of every V0 candidate at the nearest SV (largest cos between the
+// candidate momentum and the SV->candidate line). FEATURE ONLY: no feedback into
+// selection. SVs sharing a daughter track are excluded, both legs walked through
+// sec2orig into the ORIGINAL Tracks space (unmapped -1 never matches, veto fails
+// open). Sentinels cos=-2, sig=-1, idx=-1 when no usable SV remains; pointSig is
+// ALSO -1 on a singular covariance, so test "no SV" on idx, never on pointSig.
 // ---------------------------------------------------------------------------
 struct V0SVPointing {
   RVec<float> cosPoint;  // cos(candidate momentum, SV->candidate vector)
@@ -721,11 +613,10 @@ inline V0SVPointing candSVPointing(const VertexingUtils::FCCAnalysesV0& v0s,
   return out;
 }
 
-// Per-track measurement lookup by ORIGINAL track index; sentinel -1 when
-// there is no measurement or it is invalid (gate == omega of the track =
-// the failed-leg sentinel, or non-finite/non-positive value or error).
-// gate/gateErr = dQdx.value/error for BOTH lookups; trackStates = the
-// trackState collection, parallel to Tracks.
+// Per-track measurement lookup by ORIGINAL track index; sentinel -1 when there
+// is no measurement or it is invalid (gate == omega of the track = the
+// failed-leg sentinel, or non-finite/non-positive value or error). gate/gateErr
+// = dQdx.value/error; trackStates = trackState collection, parallel to Tracks.
 inline RVec<float> trackQuantityByIndex(const RVec<int>& want,
                                         const RVec<float>& values,
                                         const RVec<float>& gate,
