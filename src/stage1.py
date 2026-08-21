@@ -127,9 +127,9 @@ class Analysis():
                     "1994" : {"fraction" : self.ana_args.fraction},
                 }
 
-                # /eos/experiment is read-only from the batch nodes: write to
-                # the user EOS space instead
-                self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp2_data/{self.ana_args.tag}"
+                # ALEPH_OUT_DIR redirects non-batch output to a writable area
+                _o = _os.environ.get("ALEPH_OUT_DIR")
+                self.output_dir = f"{_o}/wp2_data/{self.ana_args.tag}" if _o else "."
 
                 # file-level splitting for condor: one job = one data file
                 if self.ana_args.procfile:
@@ -197,9 +197,10 @@ class Analysis():
                             "QQB" : {"fraction" : self.ana_args.fraction, "output":output_name},
                         }
 
-                    # /eos/experiment is read-only from the batch nodes: write to
-                    # the user EOS space instead
-                    self.output_dir = f"/eos/user/m/mdefranc/aleph_vertex/wp1_stage1/{self.ana_args.tag}"
+                    # ALEPH_OUT_DIR redirects non-batch output to a writable area
+                    _o = os.environ.get("ALEPH_OUT_DIR")
+                    self.output_dir = (f"{_o}/wp1_stage1/{self.ana_args.tag}" if _o else
+                        f"/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedMC/{self.ana_args.year}/{self.ana_args.MCtype}/stage1/{self.ana_args.tag}")
 
                     # file-level splitting for condor: one job = one input file
                     if self.ana_args.procfile:

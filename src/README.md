@@ -28,7 +28,7 @@ fccanalysis run stage1.py -- --tag <version_tag>  --MCflavour <flavour_index>
 ```
 
 Output files will be in: 
-`/eos/user/m/mdefranc/aleph_vertex/wp1_stage1/<version_tag>/<flavour_name>.root` (`--batch` writes to `/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedMC/<year>/<mc_type>/stage1/<version_tag>/` instead).
+`/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedMC/<year>/<mc_type>/stage1/<version_tag>/<flavour_name>.root`; set `ALEPH_OUT_DIR=<dir>` to write to `<dir>/wp1_stage1/<version_tag>/` instead (e.g. when `/eos/experiment` is read-only).
 
 Fraction of events to process can be set via `--fraction <val>`, default is to process all events. 
 
@@ -39,7 +39,7 @@ Fraction of events to process can be set via `--fraction <val>`, default is to p
 fccanalysis run stage1.py -- --tag <version_tag> --doData 
 ```
 
-Output files will be in: `/eos/user/m/mdefranc/aleph_vertex/wp2_data/<version_tag>/` (`--batch` writes to `/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedData/<year>/stage1/<version_tag>/` instead).
+Output files will be in the working directory (`--batch`: `/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedData/<year>/stage1/<version_tag>/`); set `ALEPH_OUT_DIR=<dir>` to write to `<dir>/wp2_data/<version_tag>/`.
 
 `--year` and `--fraction` is also supported as an argument here. 
 
@@ -77,6 +77,8 @@ Two SV collections are written from the same event: `svn_*` runs on the tracks l
 ### Other options
 
 `--excludeRuns RUN [RUN ...]` (data only) vetoes the listed run numbers before any selection; `eventsProcessed` still counts the raw input.
+
+Environment overrides for local (non-`--batch`) runs: `ALEPH_RECLUS_DIR=<dir>` reads the input files from `<dir>` instead of `/eos/experiment` (a re-clustered copy lifts the RDataFrame thread cap set by the few TTree clusters of the raw files); `ALEPH_OUT_DIR=<dir>` writes the output under `<dir>` (see above).
 
 ### The two-tier V0 module
 
