@@ -53,7 +53,7 @@ The legacy code paths remain available as opt-outs:
 
 | flag | meaning |
 | --- | --- |
-| `--oldPV` | legacy PV chain: `get_PrimaryTracks` + `VertexFitter_Tk`, and the origin-referenced track pre-selection instead of the beamspot-referenced one. No `pv_*` flag branches. |
+| `--oldPV` | legacy PV chain exactly as implemented in `FCCAnalyses`: `get_PrimaryTracks` + `VertexFitter_Tk`, and the origin-referenced track pre-selection instead of the beamspot-referenced one. No `pv_*` flag branches. Note that the beamspot constraint of the `get_PrimaryTracks` selection fit is passed in mm while its track parameters are read in cm, so that constraint is off by a factor 1000 and is effectively absent; the final `VertexFitter_Tk` fit is unaffected. |
 | `--oldSV` | drop the standalone SV module: no `svn_*`/`svm_*` branches. |
 | `--oldV0` | drop the two-tier V0 module: no `v0n_*`/`v0njet_*` and no V0 truth branches. Implies `--oldSV`, since the SV finder consumes the tight-V0 track veto. |
 
