@@ -4,7 +4,7 @@
 /*
   Standalone primary-vertex (PV) fitter: damped Gauss-Newton with an optional
   Gaussian beam-spot constraint, a deterministic seed ladder, and iterative
-  pvchi2 track pruning through the same fitter entry point.
+  chi2max track pruning through the same fitter entry point.
 
   Units: cm / rad / 1/cm everywhere. Inputs are ALEPH-flipped, cm-native
   edm4hep track states. Momentum: pT [GeV] = kPtPerTeslaCm * Bz[T] / |omega|.
@@ -43,16 +43,34 @@ using Mat5 = Eigen::Matrix<double, 5, 5>;
 using Mat35 = Eigen::Matrix<double, 3, 5>;
 
 // ---------------------------------------------------------------------------
+// adopted primary-vertex selection: the single source for both PV chains
+// ---------------------------------------------------------------------------
+
+// chi2max for track/vertex compatibility; lower = fewer tracks claimed primary
+// = more tracks left to the secondary finders.
+constexpr double PVN_CHI2_MAX = 5.0;
+
+// track pre-selection window on the impact parameters, cm
+constexpr double PVN_D0_MAX = 0.75;
+constexpr double PVN_Z0_MAX = 2.0;
+
+// beam-spot constraint widths, PHYSICAL cm; the selection fit and the final fit
+// share them. The legacy chain rescales them to its own unit convention.
+constexpr double PVN_BS_SIGMA_X = 0.02;
+constexpr double PVN_BS_SIGMA_Y = 0.01;
+constexpr double PVN_BS_SIGMA_Z = 2.0;
+
+// ---------------------------------------------------------------------------
 // configuration and result types
 // ---------------------------------------------------------------------------
 
 struct BeamSpot {
-  // Gaussian luminous-region constraint, PHYSICAL cm. Widths are normally
-  // supplied by the caller; these defaults serve the offline harness.
+  // Gaussian luminous-region constraint, PHYSICAL cm. The widths carry no
+  // defaults: every caller supplies them explicitly.
   double x = 0.0, y = 0.0, z = 0.0;
-  double sigma_x = 0.02;   // 200 um
-  double sigma_y = 0.01;   // 100 um
-  double sigma_z = 2.0;    // 2 cm
+  double sigma_x;
+  double sigma_y;
+  double sigma_z;
   Vec3 center() const { return Vec3(x, y, z); }
   Mat3 cov_inv() const {
     Mat3 m = Mat3::Zero();
@@ -162,7 +180,7 @@ struct PVFitResult {
 };
 
 struct PVSelResult {
-  // Result of the iterative pvchi2 pruning.
+  // Result of the iterative chi2max pruning.
   RVec<int> kept;           // indices (into the input track list) kept primary
   PVFitResult fit;          // the fit of the final kept set
   bool split_converged = false;  // EVERY pruning pass converged (fit.converged
@@ -742,7 +760,7 @@ inline PVFitResult fit_vertex_seeded(const RVec<edm4hep::TrackState>& tracks,
   return detail::fit_core(ts, &bs, &seed, cfg);
 }
 
-// Iterative pvchi2 pruning with the SAME fitter and the SAME beam-spot
+// Iterative chi2max pruning with the SAME fitter and the SAME beam-spot
 // constraint as the final fit (identity by construction).
 inline PVSelResult select_primary_tracks(
     const RVec<edm4hep::TrackState>& tracks, const BeamSpot& bs,

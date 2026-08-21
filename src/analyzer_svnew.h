@@ -19,8 +19,22 @@ namespace AlephSVNew {
 
 using ROOT::VecOps::RVec;
 
-// Cut values are caller-supplied; no defaults here.
 constexpr double SVN_MPI = 0.13957039;
+
+// Adopted secondary-vertex selection: the single source for these values.
+constexpr double SVN_CHI2 = 10.;        // normalised vertex chi2 (seed and growth)
+constexpr double SVN_DIS_LO = 0.03;     // PV displacement window, low edge [cm]
+constexpr double SVN_DIS_HI = 3.;       // PV displacement window, high edge [cm]
+constexpr double SVN_SIGL_MAX = 0.10;   // longitudinal vertex sigma guard [cm]
+constexpr int SVN_MAX_TRK = 8;          // maximum tracks per candidate (growth cap)
+constexpr double SVN_TRK_CHI2 = 5.;     // per-track chi2 contribution cap (<=0 off)
+constexpr double SVN_COS_POINT = 0.7;   // minimum cosPointing
+constexpr int SVN_CLAIM_MODE = 0;       // seed ordering: best-chi2 seed first
+constexpr double SVN_GROW_SHIFT = 0.;   // max fitted-vertex shift per growth step [cm]; 0 = off
+
+// V0-track masking modes for findSVs
+constexpr int SVN_MASK_NONE = 0;        // mask nothing (unmasked control twin)
+constexpr int SVN_MASK_MODE = 1;        // adopted: mask the tight-claimed V0 tracks
 
 // sigma along direction u from the edm4hep lower-triangular covMatrix
 // (xx, yx, yy, zx, zy, zz); fit runs in the cm-as-mm homothety, positions cm.
@@ -43,14 +57,14 @@ inline VertexingUtils::FCCAnalysesV0 findSVs(
     const RVec<int>& v0_tight,
     int mask_mode,
     double solenoidBz,
-    double chi2_cut,
-    double dis_lo, double dis_hi,
-    double sigl_max,
-    int max_tracks,
-    double trk_chi2,
-    double cos_point_min,
-    int claim_mode,
-    double grow_shift) {
+    double chi2_cut = SVN_CHI2,
+    double dis_lo = SVN_DIS_LO, double dis_hi = SVN_DIS_HI,
+    double sigl_max = SVN_SIGL_MAX,
+    int max_tracks = SVN_MAX_TRK,
+    double trk_chi2 = SVN_TRK_CHI2,
+    double cos_point_min = SVN_COS_POINT,
+    int claim_mode = SVN_CLAIM_MODE,
+    double grow_shift = SVN_GROW_SHIFT) {
 
   VertexingUtils::FCCAnalysesV0 result;
   const int nTr = np_tracks.size();

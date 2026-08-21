@@ -3,6 +3,7 @@ import os
 from argparse import ArgumentParser
 
 BZ = 1.5  # solenoid field [T] — single source for the stage1 Define strings
+PVNEW = "FCCAnalyses::AlephPVNew"  # namespace holding the PV selection constants
 
 class Analysis():
 
@@ -41,55 +42,18 @@ class Analysis():
                             help='Legacy SV only: drop the standalone SV module (no svn_*/svm_* branches).')
         parser.add_argument('--oldPV', action='store_true',
                             help='Legacy PV chain: get_PrimaryTracks + VertexFitter_Tk and the origin-referenced track pre-selection, instead of the standalone fitter and its beamspot-referenced window (no pv_* flag branches).')
-        parser.add_argument('--svMaskMode', default=1, type=int,
-                            help='SV module: V0-track masking. 0 none, 1 tight-claimed, 2 all claimed.')
-        parser.add_argument('--svChi2', default=10., type=float,
-                            help='SV module: normalised vertex chi2 cut (seed + growth).')
-        parser.add_argument('--svSigL', default=0.10, type=float,
-                            help='SV module: longitudinal vertex sigma guard [cm].')
-        parser.add_argument('--svDisLo', default=0.03, type=float,
-                            help='SV module: displacement window low edge [cm].')
-        parser.add_argument('--svDisHi', default=3., type=float,
-                            help='SV module: displacement window high edge [cm].')
-        parser.add_argument('--svTrkChi2', default=5., type=float,
-                            help='SV module: per-track chi2 contribution cap (<=0 off).')
-        parser.add_argument('--svCosPoint', default=0.7, type=float,
-                            help='SV module: minimum SV cosPointing.')
-        parser.add_argument('--svMaxTrk', default=8, type=int,
-                            help='SV module: maximum tracks per SV candidate (growth cap).')
-        parser.add_argument('--svGrowShift', default=0., type=float,
-                            help='SV module: max fitted-vertex displacement [cm] allowed per growth '
-                                 'step (position-stability guard; 0 = off).')
-        parser.add_argument('--svClaimMode', default=0, type=int,
-                            help='SV module: seed ordering / claiming. 0 best-chi2 seed first, '
-                                 '1 densest seed first, 2 two-phase grow-all-then-claim.')
         parser.add_argument('--v0nKsPointing', default=None, type=float,
                             help='DEPRECATED/superseded by the two-tier module; using it is an error.')
         parser.add_argument('--v0nWideLamLoose', action='store_true',
                             help='TAIL-MEASUREMENT VARIANT: loose Lambda AP band ramp edges doubled (0.40/0.80; stored acceptance 0.8x that) to measure the band tail. Not for standard productions.')
         parser.add_argument('--v0nLamPointKsTiers', action='store_true',
                             help='SIZING VARIANT: tight-tier Lambda pointing aligned to the Ks p-tiers. Not for standard productions; candTight still encodes the adopted package.')
-        parser.add_argument('--pvchi2', default=5.0, type=float,
-                            help='PV fit: chi2max for track compatibility (lower = fewer tracks claimed primary = more secondaries).')
-        parser.add_argument('--pvIPWindow', nargs=2, default=[0.75, 2.0], type=float,
-                            metavar=('D0MAX', 'Z0MAX'),
-                            help='PV track pre-selection |D0|, |Z0| upper bounds [cm] (default 0.75 2.0).')
         parser.add_argument('--excludeRuns', nargs='+', default=[], type=int, metavar='RUN',
                             help='data only: veto these run numbers before any selection (eventsProcessed still counts the raw input).')
-        parser.add_argument('--pvBSWidth', nargs=3, default=[200., 100., 2.], type=float,
-                            metavar=('SX', 'SY', 'SZ'),
-                            help='beamspot-constraint widths for BOTH PV fits: SX, SY [um], SZ [cm] (default 200 100 2).')
         # Parse additional arguments not known to the FCCAnalyses parsers
         # All command line arguments know to fccanalysis are provided in the
         # `cmdline_arg` dictionary.
-        self.ana_args, unknown_args = parser.parse_known_args(cmdline_args['remaining'])
-
-        # The opt-in module flags were retired when the new chain became the default.
-        retired = {'--newV0', '--newSV', '--newPV', '--pvIPRefBS', '--truthV0'}.intersection(unknown_args)
-        if retired:
-            print("----> ERROR: retired flag(s) {}: the new PV/SV/V0 modules are the "
-                  "default. Opt out with --oldPV/--oldSV/--oldV0.".format(' '.join(sorted(retired))))
-            exit()
+        self.ana_args, _ = parser.parse_known_args(cmdline_args['remaining'])
 
         # Module switches: new PV/SV/V0 by default, --old* opts back out.
         # The SV finder consumes the tight-V0 track veto, so --oldV0 forces --oldSV.
@@ -146,8 +110,7 @@ class Analysis():
                 print(f"----> INPUT OVERRIDE (ALEPH_RECLUS_DIR): {_r}")
                 self.input_dir = _r
             self.output_dir_eos = f"/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedData/{self.ana_args.year}/stage1/{self.ana_args.tag}"
-            self.output_dir = "."
-            
+
             if self.ana_args.batch:
                 self.output_dir = "./data/"
                 if self.ana_args.chunks:
@@ -213,8 +176,6 @@ class Analysis():
                 self.n_threads = 8
             
             else:
-                self.output_dir = f"/eos/experiment/fcc/ee/analyses/case-studies/aleph/processedMC/{self.ana_args.year}/{self.ana_args.MCtype}/stage1/{self.ana_args.tag}"
-
                 #local tester for validation
                 if self.ana_args.valid:
 
@@ -263,13 +224,13 @@ class Analysis():
         # analyzer_truth.h is loaded unconditionally: its truth-FREE helpers
         # (selectedBaselineOriginalIndices / secondaryToOriginalTrack) back the
         # always-written prim2origIdx / sec2origIdx index-map branches, on data too.
-        self.include_paths = ["analyzer.h", "analyzer_truth.h"]
+        # analyzer_pvnew.h is loaded unconditionally too: both PV chains read the
+        # selection constants it defines.
+        self.include_paths = ["analyzer.h", "analyzer_truth.h", "analyzer_pvnew.h"]
         if self.do_v0new:
             self.include_paths.append("analyzer_v0new.h")
         if self.do_svnew:
             self.include_paths.append("analyzer_svnew.h")
-        if self.do_pvnew:
-            self.include_paths.append("analyzer_pvnew.h")
 
         # #submit to batch if requested:
         # self.run_batch = self.ana_args.batch # no longer supported
@@ -368,11 +329,11 @@ class Analysis():
         # Upper bounds on the impact parameters, pre-selecting tracks for the PV fit.
         # Referenced to the run beamspot (Beamspot_* are in 10um units -> cm); with
         # --oldPV to the origin, off-centre by the beamspot offset in data.
-        d0_ip_max, z0_ip_max = self.ana_args.pvIPWindow
+        ip_window = "{0}::PVN_D0_MAX, {0}::PVN_Z0_MAX".format(PVNEW)
         if self.do_pvnew:
-            df = df.Define("tracks_selected_for_vertexfit_result","AlephSelection::select_tracks_impactparameters_bs( tracks_selected_baseline_result, {}, {}, Beamspot_x*1e-3, Beamspot_y*1e-3, Beamspot_z*1e-3 )".format(d0_ip_max, z0_ip_max)) 
+            df = df.Define("tracks_selected_for_vertexfit_result","AlephSelection::select_tracks_impactparameters_bs( tracks_selected_baseline_result, {}, Beamspot_x*1e-3, Beamspot_y*1e-3, Beamspot_z*1e-3 )".format(ip_window)) 
         else:
-            df = df.Define("tracks_selected_for_vertexfit_result","AlephSelection::select_tracks_impactparameters( tracks_selected_baseline_result, {}, {} )".format(d0_ip_max, z0_ip_max)) 
+            df = df.Define("tracks_selected_for_vertexfit_result","AlephSelection::select_tracks_impactparameters( tracks_selected_baseline_result, {} )".format(ip_window)) 
         df = df.Define("tracks_selected_for_vertexfit","tracks_selected_for_vertexfit_result.tracks") 
         df = df.Define("trackstates_selected_for_vertexfit","tracks_selected_for_vertexfit_result.trackStates") 
 
@@ -389,18 +350,18 @@ class Analysis():
 
         # run primary vertex fit using FCCAna native fitter
 
-        # Luka's loose BS constraints from looking at data; override with --pvBSWidth SX SY SZ
-        res_x_loose = self.ana_args.pvBSWidth[0] # in um
-        res_y_loose = self.ana_args.pvBSWidth[1] # in um
-        res_z_loose = self.ana_args.pvBSWidth[2] # in cm
-
-        chi2max = self.ana_args.pvchi2 # the maximum chi2 under which tracks are compatible with vertex fit (default 5.)
+        # Beam-spot constraint widths and the track-compatibility chi2max: both PV
+        # chains read them from analyzer_pvnew.h, in cm.
+        bs_sig_cm = "{0}::PVN_BS_SIGMA_X, {0}::PVN_BS_SIGMA_Y, {0}::PVN_BS_SIGMA_Z".format(PVNEW)
+        chi2max = "{}::PVN_CHI2_MAX".format(PVNEW)
+        # the legacy fitter wants x,y in 10um and z in mm: cm x 1e3 for all three
+        bs_sig_legacy = "{0}::PVN_BS_SIGMA_X*1e3, {0}::PVN_BS_SIGMA_Y*1e3, {0}::PVN_BS_SIGMA_Z*1e3".format(PVNEW)
 
         if self.do_pvnew:
             # Standalone PV fitter (analyzer_pvnew.h), all lengths in cm: the
             # selection fit and the final fit share the same beam-spot constraint.
             bs_cm = ("FCCAnalyses::AlephPVNew::BeamSpot{{Beamspot_x*1e-3, Beamspot_y*1e-3, "
-                     "Beamspot_z*1e-3, {}, {}, {}}}").format(res_x_loose * 1e-4, res_y_loose * 1e-4, res_z_loose)
+                     "Beamspot_z*1e-3, {}}}").format(bs_sig_cm)
             df = df.Define("PVSelNew", "FCCAnalyses::AlephPVNew::select_primary_tracks(trackstates_selected_for_vertexfit_flipped, {}, {})".format(bs_cm, chi2max))
             # Two flags: the selection fit can fail independently of the position
             # fit, so one flag cannot cover both. int-typed.
@@ -428,8 +389,8 @@ class Analysis():
             # `if(tracksToUse.size() < 2){ return primaryTracks; }`) guards against. Without this we
             # get nPrim=1 where the reference has nPrim=0 (~1400 events / 1.05M in the full sweep).
             # note: the {{}} is an escaped literal {} for str.format - it is the empty RVec, not a placeholder
-            df = df.Define("RecoedPrimaryTracks_looseBS", "trackstates_selected_for_vertexfit_flipped.size() < 2 ? ROOT::VecOps::RVec<edm4hep::TrackState>{{}} : VertexFitterSimple::get_PrimaryTracks(trackstates_selected_for_vertexfit_flipped, true, {},{},{}, Beamspot_x, Beamspot_y, Beamspot_z, {})".format(res_x_loose/10., res_y_loose/10., res_z_loose*1E03, chi2max)) # 10um as unit (x,y), 1cm as unit (z)
-            df = df.Define("VertexObject_looseBS", "VertexFitterSimple::VertexFitter_Tk(1, RecoedPrimaryTracks_looseBS, true, {},{},{}, Beamspot_x, Beamspot_y, Beamspot_z)".format(res_x_loose/10., res_y_loose/10., res_z_loose*1E03)) # 10um as unit (x,y), 1cm as unit (z)
+            df = df.Define("RecoedPrimaryTracks_looseBS", "trackstates_selected_for_vertexfit_flipped.size() < 2 ? ROOT::VecOps::RVec<edm4hep::TrackState>{{}} : VertexFitterSimple::get_PrimaryTracks(trackstates_selected_for_vertexfit_flipped, true, {}, Beamspot_x, Beamspot_y, Beamspot_z, {})".format(bs_sig_legacy, chi2max))
+            df = df.Define("VertexObject_looseBS", "VertexFitterSimple::VertexFitter_Tk(1, RecoedPrimaryTracks_looseBS, true, {}, Beamspot_x, Beamspot_y, Beamspot_z)".format(bs_sig_legacy))
             df = df.Define("Vertex_refit_looseBS", "VertexingUtils::get_VertexData(VertexObject_looseBS)")
             df = df.Define("Vertex_refit_tlv", "TLorentzVector(Vertex_refit_looseBS.position.x, Vertex_refit_looseBS.position.y, Vertex_refit_looseBS.position.z, 0.)")
         # for retrieving secondary tracks, use the full list of selected tracks
@@ -469,8 +430,8 @@ class Analysis():
         df = df.Define("n_secondary_tracks", "ReconstructedParticle2Track::getTK_n(SecondaryTracks_looseBS)")
 
         # for comparison test, fit vertex with tracks all tracks:
-        # df = df.Define("RecoedPrimaryTracks_looseBS_all_tracks", "VertexFitterSimple::get_PrimaryTracks(_Tracks_trackStates, true, {},{},{},0.,0.,0., {})".format(res_x_loose/10., res_y_loose/10., res_z_loose*1E03, chi2max)) # 10um as unit (x,y), 1cm as unit (z)
-        # df = df.Define("VertexObject_looseBS_all_tracks", "VertexFitterSimple::VertexFitter_Tk(1, RecoedPrimaryTracks_looseBS_all_tracks, true, {},{},{},0.,0.,0.)".format(res_x_loose/10., res_y_loose/10., res_z_loose*1E03)) # 10um as unit (x,y), 1cm as unit (z)
+        # df = df.Define("RecoedPrimaryTracks_looseBS_all_tracks", "VertexFitterSimple::get_PrimaryTracks(_Tracks_trackStates, true, {},0.,0.,0., {})".format(bs_sig_legacy, chi2max))
+        # df = df.Define("VertexObject_looseBS_all_tracks", "VertexFitterSimple::VertexFitter_Tk(1, RecoedPrimaryTracks_looseBS_all_tracks, true, {},0.,0.,0.)".format(bs_sig_legacy))
         # df = df.Define("Vertex_refit_looseBS_all_tracks", "VertexingUtils::get_VertexData(VertexObject_looseBS_all_tracks)")
         # df = df.Define("Vertex_refit_tlv_all_tracks", "TLorentzVector(Vertex_refit_looseBS_all_tracks.position.x, Vertex_refit_looseBS_all_tracks.position.y, Vertex_refit_looseBS_all_tracks.position.z, 0.)")
 
@@ -761,14 +722,11 @@ class Analysis():
 
         ############################################# Standalone SV module ####################################################
         if self.do_svnew:
-            # V0-first: svn_* = SV finding after masking V0-claimed tracks (svMaskMode);
+            # V0-first: svn_* = SV finding after masking the tight-claimed V0 tracks;
             # svm_* = unmasked control twin from the SAME event, for the interplay study.
-            sv_args = (f"{BZ}, {self.ana_args.svChi2}, {self.ana_args.svDisLo}, "
-                       f"{self.ana_args.svDisHi}, {self.ana_args.svSigL}, {self.ana_args.svMaxTrk}, "
-                       f"{self.ana_args.svTrkChi2}, {self.ana_args.svCosPoint}, "
-                       f"{self.ana_args.svClaimMode}, {self.ana_args.svGrowShift}")
-            for pfx, mode in (("svn", self.ana_args.svMaskMode), ("svm", 0)):
-                svn_expr = f"FCCAnalyses::AlephSVNew::findSVs(SecondaryTracks_looseBS, VertexObject_looseBS, V0sNew_event, v0n_tight, {mode}, {sv_args})"
+            SVNEW = "FCCAnalyses::AlephSVNew"
+            for pfx, mode in (("svn", f"{SVNEW}::SVN_MASK_MODE"), ("svm", f"{SVNEW}::SVN_MASK_NONE")):
+                svn_expr = f"{SVNEW}::findSVs(SecondaryTracks_looseBS, VertexObject_looseBS, V0sNew_event, v0n_tight, {mode}, {BZ})"
                 if self.do_pvnew:
                     # explicit entry guard (see V0sNew_event above)
                     svn_expr = ("pv_converged ? " + svn_expr +
